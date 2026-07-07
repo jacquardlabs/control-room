@@ -77,6 +77,8 @@ the T1/T2/T3 milestones. Capability summary:
 | Per-stream cost vitals | T1 | Not started |
 | Read-only crossing amendment, then: resolve parks, answer questions, action log | T2 | Not started |
 | Launch epics/workflows/sessions from the app; presets; worktree lifecycle | T3 | Not started |
+| Desktop shell (Tauri-class, signed/notarized) + menubar caution light | T4 | Not started |
+| Claude credentialing: Agent SDK auth, first-run auth doctor | T4 | Not started |
 
 ## Critical user journeys
 
@@ -120,6 +122,16 @@ the T1/T2/T3 milestones. Capability summary:
 4. **The renderer/schema dependency runs through studious #98** — by design. If #98
    stalls, T1's entry gate holds control-room too; that coupling is accepted and
    recorded rather than worked around by forking.
+
+## Credentialing posture (recorded early, built at T4)
+
+control-room's stages need no model calls of their own through T3 — launched sessions
+inherit the user's Claude Code auth, and the monitor only reads disk. When in-app
+agent capability arrives (or the desktop appliance ships), it runs on **the user's own
+Claude subscription via the Agent SDK**, never a bundled key: winnow's pattern,
+including the first-run **auth doctor** (which credential is active; whether usage
+bills subscription credit or pay-as-you-go API) and the standing **SDK policy watch**
+(Anthropic's subscription-auth terms move; re-verify per stage, never assume).
 
 ## Business model
 

@@ -103,3 +103,13 @@ and the T1/T2/T3 milestones with their stories. The build order is unchanged: T1
 begins only after its entry gate (studious #98 board shipped, attention schema hardened
 on a real epic) and behind the standing WIP cap. A repo with issues is a promise to
 *decide well later*, not to build now — the brigade precedent, applied with its lesson.
+
+## Addendum 2 — 2026-07-07: T4, the desktop appliance
+
+Owner addition: at some point control-room becomes a **desktop app using the Claude
+credentialing process** — winnow's Phase-4 pattern applied here: Tauri-class shell,
+signing/notarization, and Agent SDK auth on the user's own subscription with a
+first-run auth doctor. Recorded as the T4 milestone; gated on T1's daily-driver
+verdict holding (a desktop appliance is only earned by a tool already kept open), and
+unordered relative to T2/T3. Through T3 control-room needs no credentials of its own —
+the monitor reads disk and launched sessions inherit the user's Claude Code auth.

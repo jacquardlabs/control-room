@@ -16,6 +16,7 @@ Not a log multiplexer or terminal-pane manager. Not hosted, not multi-user, not 
 - **T1 — read-only control-room:** stream discovery, generic attention detection (input-blocked · question-pending · review-ready · died · grinding), board-protocol enrichment, tabs + fleet strip, notifications with an acknowledge loop.
 - **T2 — input-back:** resolve a parked story, answer a pending question, from the app — the human acting through a surface, with an honest action log. Read-only ends here, in writing.
 - **T3 — kick-off:** launch epics, workflows, and headless sessions from the chair. The all-in-one operator platform wrapping whatever workflow — entered only after a written vendor-landscape re-check.
+- **T4 — the desktop appliance:** a packaged desktop app (Tauri-class shell, winnow's Phase-4 packaging pattern) with Claude credentialing through the Agent SDK — the user's own subscription, a first-run auth doctor showing which credential is active and what it bills. Menubar caution light, login-item persistence, native notifications.
 
 ## Status
 
