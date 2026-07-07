@@ -1,0 +1,26 @@
+# control-room
+
+The operator seat for concurrent Claude Code work, from [Jacquard Labs](https://github.com/jacquardlabs).
+
+Where you sit and watch the gauges and screens to see what's going on: a tabbed dashboard across every session, workflow run, and background task on your machine — churning away giving updates, and telling you when your input is needed. One fleet strip always visible (N grinding · M need you · MASTER CAUTION), one tab per work stream, the winning Flight Deck board rendering each stream's progress.
+
+The founding opinion, and the moat: **progress and attention, not logs.** herdr, Orca, and Conductor multiplex agent terminals — panes of text streaming by, answering "what is it typing." control-room answers the operator's actual questions: *is it progressing, and which of my eight Claudes is allowed to interrupt me?* Logs live one deliberate click away, in a drawer, never ambient. This information design won a timed comprehension test against three denser alternatives before it was chosen.
+
+## What control-room must never become
+
+Not a log multiplexer or terminal-pane manager. Not hosted, not multi-user, not telemetered. Not a policy engine — it never answers, approves, or retries anything on its own; through T1 it is strictly read-only, and the T2 crossing into operator actions happens by written constitutional amendment, not drift. Not the per-epic board itself (that ships inside [studious](https://github.com/jacquardlabs/studious), issue #98) and not session analytics (that's [cctx](https://github.com/jacquardlabs/cctx)'s job, after the fact).
+
+## The staged path
+
+- **T0** — the studious andon board ships first (studious #98): hardens the schema-driven renderer and the attention-event taxonomy on real epics. control-room work before T0 is premature by construction.
+- **T1 — read-only control-room:** stream discovery, generic attention detection (input-blocked · question-pending · review-ready · died · grinding), board-protocol enrichment, tabs + fleet strip, notifications with an acknowledge loop.
+- **T2 — input-back:** resolve a parked story, answer a pending question, from the app — the human acting through a surface, with an honest action log. Read-only ends here, in writing.
+- **T3 — kick-off:** launch epics, workflows, and headless sessions from the chair. The all-in-one operator platform wrapping whatever workflow — entered only after a written vendor-landscape re-check.
+
+## Status
+
+Design and backlog home — no code yet. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown. Build begins at T1's entry gate, behind the portfolio WIP cap.
+
+## License
+
+TBD (decided before first release).
