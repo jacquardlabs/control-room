@@ -28,7 +28,7 @@ from control_room.attention.transcripts import (
     read_transcript_entries,
 )
 from control_room.models import StreamKind, StreamRecord
-from control_room.vendor.cctx_discovery import find_project_dir
+from control_room.transcript_locator import resolve_transcript_path
 
 STALE_AFTER = timedelta(seconds=30)
 """How long a hook-sourced event stays authoritative before poll-fallback
@@ -114,21 +114,10 @@ def poll_stream(stream: StreamRecord, *, projects_dir: Path | None = None) -> Ta
     if stream.kind in (StreamKind.BACKGROUND_TASK, StreamKind.WORKFLOW_RUN):
         return classify_job_record(_read_json(Path(stream.source_path)))
 
-    transcript_path = _resolve_transcript_path(stream, projects_dir=projects_dir)
+    transcript_path = resolve_transcript_path(stream, projects_dir=projects_dir)
     if transcript_path is None:
         return TailVerdict(AttentionState.GRINDING)
     return classify_transcript_tail(read_transcript_entries(transcript_path))
-
-
-def _resolve_transcript_path(stream: StreamRecord, *, projects_dir: Path | None) -> Path | None:
-    if not stream.cwd or not stream.id.startswith("interactive:"):
-        return None
-    session_id = stream.id.removeprefix("interactive:")
-    project_dir = find_project_dir(Path(stream.cwd), base=projects_dir)
-    if project_dir is None:
-        return None
-    candidate = project_dir / f"{session_id}.jsonl"
-    return candidate if candidate.is_file() else None
 
 
 def _read_json(path: Path) -> dict:

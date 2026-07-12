@@ -10,6 +10,7 @@ fresh `FleetState` pointed at the same disk reconstructs the same picture a
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -48,6 +49,55 @@ def test_grinding_session_produces_one_snapshot_with_rendered_board(tmp_path):
     finally:
         proc.kill()
         proc.wait()
+
+
+def test_poll_populates_per_stream_burn_and_wall_aggregate(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="s1", cwd=str(tmp_path))
+
+        project_dir = projects_dir / str(tmp_path.resolve()).replace("/", "-")
+        project_dir.mkdir(parents=True)
+        (project_dir / "s1.jsonl").write_text(
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "requestId": "req-1",
+                    "message": {
+                        "id": "m1",
+                        "model": "claude-opus-4-5-20251101",
+                        "usage": {"input_tokens": 1_000_000},
+                    },
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+        snapshot = state.poll()
+
+        (item,) = snapshot.streams
+        assert item.burn_usd == 5.0  # 1M input tokens @ $5/Mtok
+        assert snapshot.wall.aggregate_burn_usd == 5.0
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_poll_leaves_wall_aggregate_burn_none_when_no_stream_prices(tmp_path):
+    jobs_dir = tmp_path / "jobs"
+    write_job(jobs_dir, job_id="j1", cwd=str(tmp_path), state="working")
+    state = FleetState(tmp_path / "sessions", jobs_dir, tmp_path / "events")
+    snapshot = state.poll()
+
+    (item,) = snapshot.streams
+    assert item.burn_usd is None
+    assert snapshot.wall.aggregate_burn_usd is None
 
 
 def test_done_job_inflates_no_wall_count(tmp_path):

@@ -54,6 +54,29 @@ def test_payload_round_trips_through_json_with_expected_fields():
     assert item["live_state"] == LiveState.LIVE.value
     assert item["board_html"] == "<section>x</section>"
     assert item["bucket"] == "M"  # input-blocked -> M, via control_room.board.bucket.wall_bucket
+    assert item["burn_usd"] is None  # StreamSnapshot's own default -- not fabricated
+
+
+def test_payload_passes_through_a_computed_burn_usd():
+    stream = _stream()
+    event = AttentionEvent(
+        stream_id=stream.id,
+        state=AttentionState.GRINDING,
+        source=AttentionSource.POLL,
+        at=stream.first_seen,
+    )
+    snapshot = FleetSnapshot(
+        generated_at=stream.first_seen,
+        wall=compute_wall_summary([event]),
+        streams=(
+            StreamSnapshot(stream=stream, event=event, board_html="<section/>", burn_usd=4.2),
+        ),
+    )
+
+    payload = build_fleet_payload(snapshot, poll_interval_seconds=3.0)
+
+    (item,) = payload.streams
+    assert item.burn_usd == 4.2
 
 
 def test_payload_bucket_is_none_for_done_and_grinding_is_n():

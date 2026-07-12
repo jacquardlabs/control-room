@@ -29,6 +29,7 @@ class StreamPayload(BaseModel):
     reason: str | None
     live_state: LiveState
     board_html: str
+    burn_usd: float | None
     bucket: WallBucket | None
     """The stream's wall bucket (N/R/M), or `None` for `done` -- computed
     once here via `control_room.board.bucket.wall_bucket`, the single owner
@@ -74,6 +75,7 @@ def build_fleet_payload(snapshot: FleetSnapshot, *, poll_interval_seconds: float
                 reason=item.event.reason,
                 live_state=item.stream.live_state,
                 board_html=item.board_html,
+                burn_usd=item.burn_usd,
                 bucket=wall_bucket(item.event.state),
             )
             for item in snapshot.streams

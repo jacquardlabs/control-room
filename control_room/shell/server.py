@@ -99,6 +99,7 @@ class FleetHTTPServer(ThreadingHTTPServer):
         sessions_dir: Path,
         jobs_dir: Path,
         events_dir: Path,
+        projects_dir: Path | None = None,
         index_html: Path = INDEX_HTML,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
     ) -> None:
@@ -109,7 +110,7 @@ class FleetHTTPServer(ThreadingHTTPServer):
         self.index_html = index_html
         self.poll_interval = poll_interval
 
-        self.fleet_state = FleetState(sessions_dir, jobs_dir, events_dir)
+        self.fleet_state = FleetState(sessions_dir, jobs_dir, events_dir, projects_dir=projects_dir)
         self._snapshot_cv = threading.Condition()
         self._latest_payload: FleetPayload | None = None
         # Must start below _serve_events' own initial `after_seq = -1`, not
@@ -219,6 +220,7 @@ def build_server(
     sessions_dir: Path | None = None,
     jobs_dir: Path | None = None,
     events_dir: Path | None = None,
+    projects_dir: Path | None = None,
     index_html: Path = INDEX_HTML,
     poll_interval: float = DEFAULT_POLL_INTERVAL,
 ) -> FleetHTTPServer:
@@ -228,6 +230,7 @@ def build_server(
         sessions_dir=sessions_dir or paths.sessions_dir(),
         jobs_dir=jobs_dir or paths.jobs_dir(),
         events_dir=events_dir or paths.attention_events_dir(),
+        projects_dir=projects_dir or paths.projects_dir(),
         index_html=index_html,
         poll_interval=poll_interval,
     )
