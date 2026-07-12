@@ -60,6 +60,24 @@ def test_long_structured_report_ending_in_a_question_is_not_a_false_amber() -> N
     assert verdict.state == AttentionState.REVIEW_READY
 
 
+def test_trailing_local_command_after_a_clean_finish_is_still_review_ready() -> None:
+    """Regression, found live during dogfooding: a session's transcript can
+    end with a local/slash-command invocation (e.g. `/reload-plugins`) run
+    *after* the real last conversational turn -- confirmed against real
+    `~/.claude/projects/*.jsonl` data. That entry's `type` is `user` (so
+    the bookkeeping-type skip in `_last_turn` doesn't catch it) but its
+    `message.content` is a bare string, not the Messages API's block list
+    -- if mistaken for the last turn, it misread as `grinding`, and if the
+    session process then exited, `attention.liveness` promoted that
+    straight to a false `died` (MASTER CAUTION for a session that had, in
+    fact, finished cleanly and simply been closed). Must see straight
+    through to the real last turn instead.
+    """
+    verdict = _classify_fixture("review_ready__trailing_local_command_after_clean_finish.jsonl")
+    assert verdict.state == AttentionState.REVIEW_READY
+    assert verdict.reason is None
+
+
 def test_short_clarifying_question_is_question_pending_with_its_reason() -> None:
     verdict = _classify_fixture("question_pending__short_clarifying_question.jsonl")
     assert verdict.state == AttentionState.QUESTION_PENDING

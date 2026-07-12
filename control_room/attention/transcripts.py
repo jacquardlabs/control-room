@@ -148,8 +148,24 @@ def _last_turn(entries: Sequence[dict]) -> tuple[str, dict] | None:
         if entry_type not in ("user", "assistant"):
             continue  # bookkeeping entry or unrecognized type -- keep walking back
         message = entry.get("message")
-        if isinstance(message, dict):
-            return entry_type, message
+        if not isinstance(message, dict):
+            continue
+        if not isinstance(message.get("content"), list):
+            # A real Messages API turn's `content` is always a block list,
+            # even a single plain-text reply -- confirmed against real
+            # ~/.claude/projects/*.jsonl data. A `type: "user"` entry whose
+            # `content` is a bare string is a local/slash-command
+            # invocation (e.g. `<command-name>/reload-plugins...`), not a
+            # conversational turn: if the operator's last action in a
+            # session was running a local command, this entry sits after
+            # the real last turn and must not be mistaken for it -- that
+            # misread `grinding` (this module's own safe default for "not
+            # a turn at all") and then, if the session process exited,
+            # `attention.liveness` promoted it straight to a false `died`,
+            # since `grinding` is a mid-flight state and no session/local
+            # command truly is. Keep walking back to the real last turn.
+            continue
+        return entry_type, message
     return None
 
 
