@@ -1,0 +1,51 @@
+[project]
+name = "control-room"
+version = "0.1.0"
+description = "The operator seat for concurrent Claude Code work -- stream discovery, attention detection, fleet strip."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Jacquard Labs" }]
+
+dependencies = ["pydantic>=2.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# Vendored code is kept as close to upstream cctx as possible (see
+# control_room/vendor/cctx_discovery.py's header) so re-sync diffs stay
+# clean -- excluded from both lint and format, not just relaxed.
+extend-exclude = ["control_room/vendor"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+    "C4",   # comprehensions
+    "PERF", # performance
+    "RUF",  # ruff-specific
+    "PIE",  # misc lints
+]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.hatch.build.targets.wheel]
+packages = ["control_room"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

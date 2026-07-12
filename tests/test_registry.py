@@ -1,0 +1,193 @@
+"""Registry tests pinned directly to the story's acceptance criteria:
+
+"With 3 interactive sessions, 1 Workflow run, 1 background task live, all
+5 appear within one poll interval (<=5s); a killed session grays within 2
+intervals and ages out, never disappearing while amber; streams map to
+worktrees/projects correctly; discovery is read-only by construction."
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+
+from control_room.models import LiveState, StreamKind
+from control_room.registry import GONE_AFTER_MISSES, GRACE_AFTER_MISSES, StreamRegistry
+from tests.conftest import add_linked_worktree, make_main_repo, write_job, write_session_file
+
+
+def _spawn_sleeper() -> subprocess.Popen:
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+
+
+def test_five_concurrent_streams_all_appear_in_one_poll(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    procs = [_spawn_sleeper() for _ in range(3)]
+    try:
+        for i, proc in enumerate(procs):
+            write_session_file(sessions_dir, pid=proc.pid, session_id=f"sid-{i}", cwd=str(tmp_path))
+        write_job(jobs_dir, job_id="wf1", cwd=str(tmp_path), template="workflow")
+        write_job(jobs_dir, job_id="bg1", cwd=str(tmp_path), template="bg")
+
+        registry = StreamRegistry(sessions_dir, jobs_dir)
+        records = registry.poll()
+
+        assert len(records) == 5
+        kinds = [r.kind for r in records]
+        assert kinds.count(StreamKind.INTERACTIVE) == 3
+        assert kinds.count(StreamKind.WORKFLOW_RUN) == 1
+        assert kinds.count(StreamKind.BACKGROUND_TASK) == 1
+        assert all(r.live_state == LiveState.LIVE for r in records)
+    finally:
+        for proc in procs:
+            proc.kill()
+            proc.wait()
+
+
+def test_killed_session_grays_within_two_polls_then_ages_out(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    proc = _spawn_sleeper()
+    write_session_file(sessions_dir, pid=proc.pid, session_id="sid-killed", cwd=str(tmp_path))
+    registry = StreamRegistry(sessions_dir, jobs_dir)
+
+    (record,) = registry.poll()
+    assert record.live_state == LiveState.LIVE
+
+    proc.kill()
+    proc.wait()
+
+    (record,) = registry.poll()  # miss 1
+    assert record.consecutive_misses == 1
+    assert record.live_state == LiveState.LIVE  # not yet graced -- one miss is a blip
+
+    (record,) = registry.poll()  # miss 2 -- exactly GRACE_AFTER_MISSES
+    assert GRACE_AFTER_MISSES == 2
+    assert record.consecutive_misses == 2
+    assert record.live_state == LiveState.GRACE
+
+    # Stays present (never disappears) through misses up to the age-out edge.
+    for _ in range(GONE_AFTER_MISSES - 2 - 1):
+        (record,) = registry.poll()
+        assert record.live_state == LiveState.GRACE
+
+    results = registry.poll()  # final miss reaching GONE_AFTER_MISSES
+    assert results == []  # aged out
+
+
+def test_transient_blip_self_heals_without_graying(tmp_path):
+    """A single missed poll must not gray a stream -- only sustained loss does."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sid-x", cwd=str(tmp_path))
+        registry = StreamRegistry(sessions_dir, jobs_dir)
+        registry.poll()
+
+        # Simulate the record vanishing from disk for one poll only (e.g. a
+        # transient read race), then reappearing.
+        session_path = sessions_dir / f"{proc.pid}.json"
+        contents = session_path.read_text(encoding="utf-8")
+        session_path.unlink()
+        (record,) = registry.poll()
+        assert record.consecutive_misses == 1
+        assert record.live_state == LiveState.LIVE
+
+        session_path.write_text(contents, encoding="utf-8")
+        (record,) = registry.poll()
+        assert record.consecutive_misses == 0
+        assert record.live_state == LiveState.LIVE
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_protected_stream_never_ages_out_while_amber(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    proc = _spawn_sleeper()
+    write_session_file(sessions_dir, pid=proc.pid, session_id="sid-amber", cwd=str(tmp_path))
+    registry = StreamRegistry(sessions_dir, jobs_dir)
+    registry.poll()
+
+    proc.kill()
+    proc.wait()
+
+    def always_protected(_record) -> bool:
+        return True
+
+    for _ in range(GONE_AFTER_MISSES + 10):
+        (record,) = registry.poll(is_protected=always_protected)
+
+    assert record.consecutive_misses >= GONE_AFTER_MISSES
+    assert record.live_state == LiveState.GRACE  # still present, still graded gray -- not gone
+
+
+def test_background_job_ages_out_via_stalled_state_file(tmp_path):
+    """Jobs have no pid -- staleness is inferred from state.json/timeline.jsonl mtimes."""
+    jobs_dir = tmp_path / "jobs"
+    sessions_dir = tmp_path / "sessions"
+    write_job(jobs_dir, job_id="stall1", cwd=str(tmp_path))
+    registry = StreamRegistry(sessions_dir, jobs_dir)
+
+    (record,) = registry.poll()
+    assert record.live_state == LiveState.LIVE
+
+    for _ in range(GONE_AFTER_MISSES - 1):
+        (record,) = registry.poll()
+    assert record.live_state == LiveState.GRACE
+
+    assert registry.poll() == []
+
+
+def test_streams_map_to_worktrees_and_projects_correctly(tmp_path):
+    main_root = make_main_repo(tmp_path / "control-room", branch="main")
+    worktree = add_linked_worktree(
+        main_root,
+        tmp_path / "control-room" / ".studious" / "worktrees" / "t1" / "stream-discovery",
+        name="stream-discovery",
+        branch="epic/t1--stream-discovery",
+    )
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sid-wt", cwd=str(worktree))
+        registry = StreamRegistry(sessions_dir, jobs_dir)
+
+        (record,) = registry.poll()
+
+        assert record.project_name == "control-room"
+        assert record.project_root == str(main_root)
+        assert record.worktree_name == "stream-discovery"
+        assert record.git_branch == "epic/t1--stream-discovery"
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_discovery_is_read_only(tmp_path):
+    """Polling must never write, create, or delete anything under the watched dirs."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    write_session_file(sessions_dir, pid=999999, session_id="sid-ro", cwd=str(tmp_path))
+    write_job(jobs_dir, job_id="ro1", cwd=str(tmp_path))
+
+    def snapshot() -> dict[str, tuple[float, int]]:
+        watched = tmp_path / "sessions", tmp_path / "jobs"
+        return {
+            str(p): (p.stat().st_mtime, p.stat().st_size)
+            for root in watched
+            for p in root.rglob("*")
+            if p.is_file()
+        }
+
+    before = snapshot()
+    registry = StreamRegistry(sessions_dir, jobs_dir)
+    for _ in range(3):
+        registry.poll()
+    after = snapshot()
+
+    assert before == after
