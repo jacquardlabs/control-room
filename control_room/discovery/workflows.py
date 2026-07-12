@@ -12,6 +12,22 @@ confirmed live (2026-07) against this project's own `epic-driver` Workflow
 runs, several sessions deep -- and against a real, reported gap: a session
 running two Workflow tool calls showed neither in control-room, only the
 one interactive-session tab, because nothing scanned this path at all.
+
+Two functions, two distinct on-disk shapes of the *same* run over its
+lifetime, confirmed directly against a real, live-in-flight run (2026-07):
+`discover_session_workflows` reads a run's own `<run-id>.json` summary --
+written exactly once, at completion (`result`/`durationMs`/`summary` are
+all end-of-run-only fields; no such file on a real machine ever carried
+`status: "running"`, even with a run actively in flight in another pane at
+that exact moment). `discover_inflight_workflow_runs` is what actually
+detects that in-flight case: a run's dispatched agents write to
+`<session>/subagents/workflows/<run-id>/` well before any summary file
+exists, and that directory's own `journal.jsonl` -- appended to at every
+agent start/result, the same data the Workflow tool's own CLI progress
+line reads -- is real, continuously-advancing evidence of life no static
+status field could ever provide here. Both give the same run the same
+`workflow:<run-id>` id, so a run discovered in-flight and later completed
+is one continuous stream identity across that transition, never two.
 """
 
 from __future__ import annotations
@@ -140,3 +156,136 @@ def _read_workflow_file(
         last_seen=now,
         source_path=str(path),
     )
+
+
+def discover_inflight_workflow_runs(
+    projects_dir: Path | None, *, now: datetime | None = None
+) -> list[StreamRecord]:
+    """Return one StreamRecord per Workflow run still in progress.
+
+    Globbed one segment deeper than the completed-run shape --
+    `*/*/subagents/workflows/*` -- since a still-running run's own agents
+    write there well before any `<session>/workflows/<run-id>.json`
+    summary exists (see this module's own docstring). A run directory with
+    a matching completed-shape file is skipped here: it's finished, and
+    `discover_session_workflows` above already owns it -- the two
+    discoverers must never both produce a record for the same run-id in
+    the same poll.
+
+    Filtered to directories whose own newest file falls within `_MAX_AGE`,
+    same constant and same reasoning as the completed-run filter above: an
+    in-flight-*shaped* directory whose files haven't moved in over a day is
+    functionally abandoned (its process died without ever writing a
+    completion summary), and undiscovered is the right failure mode for
+    that, not a fresh `live` tab flickering in on every server restart only
+    to grind through several poll ticks of staleness before aging back out.
+
+    `projects_dir=None` returns `[]` -- same isolation posture as
+    `discover_session_workflows`.
+    """
+    now = now or datetime.now(UTC)
+    if projects_dir is None or not projects_dir.is_dir():
+        return []
+
+    cutoff = (now - _MAX_AGE).timestamp()
+    run_dirs = [d for d in sorted(projects_dir.glob("*/*/subagents/workflows/*")) if d.is_dir()]
+    run_dirs = [d for d in run_dirs if inflight_workflow_activity_mtime(d) >= cutoff]
+    if not run_dirs:
+        return []
+
+    session_locations = _session_locations(projects_dir)
+
+    records = []
+    for run_dir in run_dirs:
+        record = _read_inflight_run(run_dir, session_locations=session_locations, now=now)
+        if record is not None:
+            records.append(record)
+    return records
+
+
+def inflight_workflow_activity_mtime(run_dir: Path) -> float:
+    """Latest mtime across every file directly inside `run_dir` --
+    `control_room.registry`'s own evidence-of-life signal for an in-flight
+    run, and the age filter above.
+
+    Unlike a completed run's one summary file (written once, frozen from
+    the moment it's written), an in-flight run's own files genuinely
+    advance while it's actually working: each dispatched agent writes its
+    own transcript, and `journal.jsonl` is appended to at every agent
+    start/result -- confirmed directly against a real, live run (2026-07):
+    its newest file was 31 seconds old at the moment of inspection, with a
+    fresh agent transcript actively streaming.
+    """
+    try:
+        mtimes = [p.stat().st_mtime for p in run_dir.iterdir() if p.is_file()]
+    except OSError:
+        return 0.0
+    return max(mtimes) if mtimes else 0.0
+
+
+def _read_inflight_run(
+    run_dir: Path, *, session_locations: dict[str, tuple[str, str | None]], now: datetime
+) -> StreamRecord | None:
+    run_id = run_dir.name
+    session_id = run_dir.parent.parent.parent.name  # <session>/subagents/workflows/<run-id>
+    completed_path = run_dir.parent.parent.parent / "workflows" / f"{run_id}.json"
+    if completed_path.exists():
+        return None  # finished -- discover_session_workflows owns it now
+
+    cwd, git_branch = session_locations.get(session_id, ("", None))
+    worktree_info = resolve_worktree_info(cwd) if cwd else None
+
+    return StreamRecord(
+        id=f"workflow:{run_id}",
+        kind=StreamKind.WORKFLOW_RUN,
+        label=_inflight_label(_read_progress(run_dir)),
+        cwd=cwd,
+        project_root=worktree_info.project_root if worktree_info else None,
+        project_name=worktree_info.project_name if worktree_info else None,
+        worktree_name=worktree_info.worktree_name if worktree_info else None,
+        git_branch=worktree_info.git_branch if worktree_info else git_branch,
+        parent_stream_id=f"interactive:{session_id}",
+        pid=None,
+        # No self-reported status exists at all while in flight (that's
+        # the whole gap this function closes) -- `raw_status=None` degrades
+        # `control_room.attention.jobs.classify_job_record` to `grinding`,
+        # correctly: nothing here says anything is wrong.
+        raw_status=None,
+        first_seen=now,
+        last_seen=now,
+        source_path=str(run_dir),
+    )
+
+
+def _read_progress(run_dir: Path) -> tuple[int, int] | None:
+    """(agents finished, agents started) from `journal.jsonl`'s own
+    `started`/`result` entry counts -- the same data the Workflow tool's
+    own CLI progress line ("25/26 agents done") reads, confirmed directly
+    against a real run's journal. `None` if the journal can't be read or
+    nothing has started yet."""
+    try:
+        lines = (run_dir / "journal.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    started = 0
+    finished = 0
+    for line in lines:
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("type") == "started":
+            started += 1
+        elif entry.get("type") == "result":
+            finished += 1
+    return (finished, started) if started else None
+
+
+def _inflight_label(progress: tuple[int, int] | None) -> str:
+    if progress is None:
+        return "workflow in progress"
+    finished, started = progress
+    return f"workflow in progress ({finished}/{started} agents)"

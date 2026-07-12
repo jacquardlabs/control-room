@@ -21,7 +21,10 @@ from pathlib import Path
 from control_room.attention.jobs import is_terminal_status
 from control_room.discovery.interactive import discover_interactive_sessions, pid_is_alive
 from control_room.discovery.jobs import discover_jobs, job_activity_mtime
-from control_room.discovery.workflows import discover_session_workflows
+from control_room.discovery.workflows import (
+    discover_inflight_workflow_runs,
+    discover_session_workflows,
+)
 from control_room.models import LiveState, StreamKind, StreamRecord
 
 GRACE_AFTER_MISSES = 2
@@ -164,6 +167,7 @@ class StreamRegistry:
             *discover_interactive_sessions(self._sessions_dir, now=now),
             *discover_jobs(self._jobs_dir, now=now),
             *discover_session_workflows(self._projects_dir, now=now),
+            *discover_inflight_workflow_runs(self._projects_dir, now=now),
         ]
 
     def _has_evidence_of_life(self, stream_id: str, record: StreamRecord) -> bool:
@@ -171,6 +175,28 @@ class StreamRegistry:
             return pid_is_alive(record.pid)
 
         source_path = Path(record.source_path)
+
+        if source_path.is_dir():
+            # An in-flight Workflow run (`discovery.workflows`
+            # `discover_inflight_workflow_runs`) -- there is no reliable
+            # per-tick liveness signal here at all: confirmed live (2026-07)
+            # against a real, still-progressing run (its own started agent
+            # count kept climbing tick to tick) that a naive mtime
+            # comparison across just two poll intervals falsely read as
+            # `died` -- a single dispatched agent can go quiet for far
+            # longer than a couple of polls (a long tool call, an extended
+            # thinking turn) while genuinely still working, the same
+            # "mtime staleness != no longer running" problem the completed-
+            # run branch below already solves for its own shape. As long as
+            # this directory is still being *discovered* at all -- no
+            # completion summary yet, and within
+            # `discover_inflight_workflow_runs`'s own 24h freshness window,
+            # the actual guard against a truly abandoned run -- it's alive
+            # by construction; the tick-to-tick miss counter below is the
+            # wrong tool for a signal that simply doesn't exist at this
+            # granularity.
+            return True
+
         if source_path.parent.name == "workflows" and not self._workflow_run_is_terminal(
             source_path
         ):
@@ -185,8 +211,9 @@ class StreamRegistry:
             # evidence, checked directly; once it turns terminal, the
             # mtime path below takes back over, same as any finished job.
             return True
+        else:
+            current_mtime = job_activity_mtime(source_path)
 
-        current_mtime = job_activity_mtime(source_path)
         previous_mtime = self._last_job_mtime.get(stream_id)
         self._last_job_mtime[stream_id] = current_mtime
         if previous_mtime is None:

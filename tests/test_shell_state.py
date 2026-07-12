@@ -25,6 +25,7 @@ from control_room.shell.state import FleetState
 from tests.conftest import (
     add_linked_worktree,
     make_main_repo,
+    write_inflight_workflow,
     write_job,
     write_session_file,
     write_session_workflow,
@@ -248,6 +249,46 @@ def test_a_workflow_run_folds_into_its_dispatching_sessions_pane(tmp_path):
         assert 'data-instrument-id="interactive:sess-1"' in item.board_html
         assert 'data-instrument-id="workflow:wf_abc"' in item.board_html
         assert snapshot.wall.grinding == 1  # one pane, not one entry per underlying stream
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_an_inflight_workflow_run_folds_in_as_grinding_with_progress(tmp_path):
+    """The whole reason this fold exists: a Workflow run genuinely in
+    progress (no completion summary yet, confirmed against a real live run
+    -- see `control_room.discovery.workflows`' own module docstring) must
+    render inside its dispatching session's pane as `grinding`, with its
+    real agent progress visible -- not invisible, and never mistaken for
+    `done`/`died` just because it has no self-reported status at all."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_inflight_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_live",
+            started=26,
+            finished=25,
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        snapshot = state.poll()
+
+        assert len(snapshot.streams) == 1
+        (item,) = snapshot.streams
+        assert item.stream.id == "interactive:sess-1"
+        assert item.event.state == AttentionState.GRINDING
+        assert 'data-instrument-id="workflow:wf_live"' in item.board_html
+        assert "25/26 agents" in item.board_html
+        assert snapshot.wall.need_you == 0
+        assert snapshot.wall.master_caution is False
     finally:
         proc.kill()
         proc.wait()

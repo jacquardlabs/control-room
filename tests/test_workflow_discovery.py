@@ -11,9 +11,18 @@ import os
 from datetime import UTC, datetime, timedelta
 
 from control_room.discovery import workflows as workflows_module
-from control_room.discovery.workflows import discover_session_workflows
+from control_room.discovery.workflows import (
+    discover_inflight_workflow_runs,
+    discover_session_workflows,
+    inflight_workflow_activity_mtime,
+)
 from control_room.models import StreamKind
-from tests.conftest import add_linked_worktree, make_main_repo, write_session_workflow
+from tests.conftest import (
+    add_linked_worktree,
+    make_main_repo,
+    write_inflight_workflow,
+    write_session_workflow,
+)
 
 
 def test_discovers_one_record_per_workflow_run(tmp_path):
@@ -171,3 +180,172 @@ def test_session_lookup_scans_once_per_poll_not_once_per_workflow_file(tmp_path,
 
     assert len(records) == 5
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
+# discover_inflight_workflow_runs -- a run before its completion summary
+# exists, confirmed against a real, live-in-flight run (2026-07): its own
+# `subagents/workflows/<run-id>/journal.jsonl` is what carries evidence of
+# life and progress while `discover_session_workflows` above still sees
+# nothing at all for it.
+# ---------------------------------------------------------------------------
+
+
+def test_discovers_an_inflight_run_with_no_completion_summary(tmp_path):
+    write_inflight_workflow(
+        tmp_path,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_live",
+        started=26,
+        finished=25,
+    )
+
+    (record,) = discover_inflight_workflow_runs(tmp_path)
+
+    assert record.id == "workflow:wf_live"
+    assert record.kind == StreamKind.WORKFLOW_RUN
+    assert record.parent_stream_id == "interactive:sess-1"
+    assert record.cwd == str(tmp_path)
+    assert record.raw_status is None
+    assert "25/26 agents" in record.label
+
+
+def test_a_run_with_a_completion_summary_is_not_rediscovered_as_inflight(tmp_path):
+    """The exact rule preventing the two discoverers from ever both
+    producing a record for the same run-id: once
+    `<session>/workflows/<run-id>.json` exists, the run is finished and
+    `discover_session_workflows` owns it -- the in-flight path must yield
+    nothing for it, even though its `subagents/workflows/<run-id>/`
+    directory is never cleaned up."""
+    write_inflight_workflow(
+        tmp_path,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_done",
+        started=3,
+        finished=3,
+    )
+    write_session_workflow(
+        tmp_path,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_done",
+        status="completed",
+    )
+
+    assert discover_inflight_workflow_runs(tmp_path) == []
+    (record,) = discover_session_workflows(tmp_path)
+    assert record.id == "workflow:wf_done"
+
+
+def test_progress_label_reflects_started_and_result_counts(tmp_path):
+    write_inflight_workflow(
+        tmp_path,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_a",
+        started=3,
+        finished=1,
+    )
+
+    (record,) = discover_inflight_workflow_runs(tmp_path)
+
+    assert record.label == "workflow in progress (1/3 agents)"
+
+
+def test_no_started_entries_yields_the_generic_label_not_zero_of_zero(tmp_path):
+    """A run directory that exists but whose journal has nothing in it yet
+    (a narrow startup race) must never claim `(0/0 agents)` -- that reads
+    as a stalled run, not an about-to-start one."""
+    run_dir = write_inflight_workflow(
+        tmp_path,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_a",
+        started=0,
+        finished=0,
+    )
+    (run_dir / "journal.jsonl").write_text("", encoding="utf-8")
+
+    (record,) = discover_inflight_workflow_runs(tmp_path)
+
+    assert record.label == "workflow in progress"
+
+
+def test_malformed_or_missing_journal_degrades_to_the_generic_label(tmp_path):
+    run_dir = tmp_path / "-proj" / "sess-1" / "subagents" / "workflows" / "wf_a"
+    run_dir.mkdir(parents=True)
+    (run_dir / "journal.jsonl").write_text("{not json", encoding="utf-8")
+
+    (record,) = discover_inflight_workflow_runs(tmp_path)
+
+    assert record.label == "workflow in progress"
+
+
+def test_inflight_none_projects_dir_returns_empty() -> None:
+    assert discover_inflight_workflow_runs(None) == []
+
+
+def test_inflight_missing_projects_dir_returns_empty(tmp_path):
+    assert discover_inflight_workflow_runs(tmp_path / "does-not-exist") == []
+
+
+def test_two_concurrent_inflight_runs_from_one_session_both_appear(tmp_path):
+    """The original reported gap, for the in-flight shape specifically: one
+    session, two Workflow tool calls running at once, neither finished."""
+    write_inflight_workflow(
+        tmp_path, project_dir_name="-proj", session_id="sess-1", cwd=str(tmp_path), run_id="wf_one"
+    )
+    write_inflight_workflow(
+        tmp_path, project_dir_name="-proj", session_id="sess-1", cwd=str(tmp_path), run_id="wf_two"
+    )
+
+    records = discover_inflight_workflow_runs(tmp_path)
+
+    assert sorted(r.id for r in records) == ["workflow:wf_one", "workflow:wf_two"]
+
+
+def test_an_abandoned_inflight_run_older_than_max_age_is_not_discovered(tmp_path):
+    """Regression: an in-flight-*shaped* run directory whose files haven't
+    moved in over a day is functionally abandoned (its process died
+    without ever writing a completion summary) -- undiscovered is the
+    right failure mode, not a fresh `live` tab flickering in on every
+    server restart before aging back out, mirroring the completed-run
+    discoverer's own `_MAX_AGE` filter."""
+    run_dir = write_inflight_workflow(
+        tmp_path,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_abandoned",
+        started=1,
+        finished=0,
+    )
+    old_time = (datetime.now(UTC) - timedelta(hours=25)).timestamp()
+    for f in run_dir.iterdir():
+        os.utime(f, (old_time, old_time))
+
+    assert discover_inflight_workflow_runs(tmp_path) == []
+
+
+def test_inflight_workflow_activity_mtime_is_the_newest_file_in_the_run_dir(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    old = run_dir / "old.jsonl"
+    new = run_dir / "new.jsonl"
+    old.write_text("old", encoding="utf-8")
+    new.write_text("new", encoding="utf-8")
+    old_time = (datetime.now(UTC) - timedelta(hours=1)).timestamp()
+    os.utime(old, (old_time, old_time))
+
+    assert inflight_workflow_activity_mtime(run_dir) == new.stat().st_mtime
+
+
+def test_inflight_workflow_activity_mtime_of_a_missing_dir_is_zero(tmp_path):
+    assert inflight_workflow_activity_mtime(tmp_path / "does-not-exist") == 0.0

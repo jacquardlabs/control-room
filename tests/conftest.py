@@ -117,6 +117,25 @@ def write_job(
     return job_dir / "state.json"
 
 
+def _write_session_transcript(
+    project_dir: Path, *, session_id: str, cwd: str, git_branch: str | None
+) -> None:
+    """The one line of transcript `cctx_discovery` needs to resolve a
+    session's own cwd/branch -- shared by every fixture builder below that
+    needs a dispatching session to be resolvable."""
+    project_dir.mkdir(parents=True, exist_ok=True)
+    transcript_entry = {
+        "sessionId": session_id,
+        "cwd": cwd,
+        "timestamp": "2026-07-12T12:00:00.000Z",
+    }
+    if git_branch is not None:
+        transcript_entry["gitBranch"] = git_branch
+    (project_dir / f"{session_id}.jsonl").write_text(
+        json.dumps(transcript_entry) + "\n", encoding="utf-8"
+    )
+
+
 def write_session_workflow(
     projects_dir: Path,
     *,
@@ -135,18 +154,7 @@ def write_session_workflow(
     (the run) -- confirmed against real `~/.claude/projects` data, 2026-07.
     """
     project_dir = projects_dir / project_dir_name
-    project_dir.mkdir(parents=True, exist_ok=True)
-
-    transcript_entry = {
-        "sessionId": session_id,
-        "cwd": cwd,
-        "timestamp": "2026-07-12T12:00:00.000Z",
-    }
-    if git_branch is not None:
-        transcript_entry["gitBranch"] = git_branch
-    (project_dir / f"{session_id}.jsonl").write_text(
-        json.dumps(transcript_entry) + "\n", encoding="utf-8"
-    )
+    _write_session_transcript(project_dir, session_id=session_id, cwd=cwd, git_branch=git_branch)
 
     workflows_dir = project_dir / session_id / "workflows"
     workflows_dir.mkdir(parents=True, exist_ok=True)
@@ -159,3 +167,38 @@ def write_session_workflow(
     path = workflows_dir / f"{run_id}.json"
     path.write_text(json.dumps(payload), encoding="utf-8")
     return path
+
+
+def write_inflight_workflow(
+    projects_dir: Path,
+    *,
+    project_dir_name: str,
+    session_id: str,
+    cwd: str,
+    run_id: str,
+    started: int = 1,
+    finished: int = 0,
+    git_branch: str | None = None,
+) -> Path:
+    """Build a session transcript plus a still-in-progress Workflow run's own
+    `subagents/workflows/<run_id>/journal.jsonl` -- the shape a run has
+    *before* its `workflows/<run_id>.json` completion summary exists,
+    confirmed against a real, live-in-flight run (2026-07): `started` real
+    entries followed by `finished` matching `result` entries, one
+    unmatched `started` left over whenever `finished < started` (the
+    currently-in-flight agent), matching `discover_inflight_workflow_runs`'
+    own started/result counting.
+    """
+    project_dir = projects_dir / project_dir_name
+    _write_session_transcript(project_dir, session_id=session_id, cwd=cwd, git_branch=git_branch)
+
+    run_dir = project_dir / session_id / "subagents" / "workflows" / run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    lines = []
+    for i in range(started):
+        lines.append(json.dumps({"type": "started", "agentId": f"agent-{i}"}))
+        if i < finished:
+            lines.append(json.dumps({"type": "result", "agentId": f"agent-{i}"}))
+    journal_path = run_dir / "journal.jsonl"
+    journal_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+    return run_dir

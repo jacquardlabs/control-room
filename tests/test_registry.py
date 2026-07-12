@@ -16,6 +16,7 @@ from control_room.registry import GONE_AFTER_MISSES, GRACE_AFTER_MISSES, StreamR
 from tests.conftest import (
     add_linked_worktree,
     make_main_repo,
+    write_inflight_workflow,
     write_job,
     write_session_file,
     write_session_workflow,
@@ -347,3 +348,72 @@ def test_discovery_is_read_only(tmp_path):
     after = snapshot()
 
     assert before == after
+
+
+def test_an_inflight_workflow_run_appears_and_stays_live_while_its_journal_grows(tmp_path):
+    """A still-in-progress Workflow run (no completion summary yet) must
+    appear the moment its directory exists, and stay `live` as long as its
+    own files keep advancing -- the same "all N streams appear within one
+    poll interval" bar, for the shape a run has *before* it finishes."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    projects_dir = tmp_path / "projects"
+    run_dir = write_inflight_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_live",
+        started=1,
+        finished=0,
+    )
+    registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
+
+    (record,) = registry.poll()
+    assert record.id == "workflow:wf_live"
+    assert record.kind == StreamKind.WORKFLOW_RUN
+    assert record.live_state == LiveState.LIVE
+
+    # A new agent starting is exactly what a real, still-progressing run's
+    # journal looks like tick to tick.
+    with (run_dir / "journal.jsonl").open("a", encoding="utf-8") as f:
+        f.write('{"type": "started", "agentId": "agent-2"}\n')
+
+    (record,) = registry.poll()
+    assert record.live_state == LiveState.LIVE
+    assert record.consecutive_misses == 0
+
+
+def test_an_inflight_workflow_run_never_ages_out_while_quiet(tmp_path):
+    """Regression, confirmed against a real, still-progressing run (2026-07):
+    a naive mtime comparison across just two poll intervals falsely read an
+    actively-working run as `died` (its own started agent count kept
+    climbing tick to tick in reality, but no *new* file had appeared in the
+    narrow window between two polls -- a single dispatched agent can go
+    quiet for far longer than that during a long tool call or an extended
+    thinking turn). There is no reliable per-tick liveness signal for this
+    shape at all -- as long as it's still being *discovered* (no completion
+    summary yet), it must stay `live` no matter how many consecutive polls
+    see no new file, unlike a background job's own tick-to-tick miss
+    counter. The actual guard against a truly abandoned run is
+    `discover_inflight_workflow_runs`'s own 24h freshness filter, covered
+    separately in `tests/test_workflow_discovery.py`."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    projects_dir = tmp_path / "projects"
+    write_inflight_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_quiet",
+        started=1,
+        finished=0,
+    )
+    registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
+
+    for _ in range(GONE_AFTER_MISSES + 5):
+        (record,) = registry.poll()
+
+    assert record.live_state == LiveState.LIVE
+    assert record.consecutive_misses == 0
