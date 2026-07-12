@@ -18,6 +18,7 @@ import pytest
 
 from control_room.registry import GRACE_AFTER_MISSES
 from control_room.shell.server import FleetHTTPServer, FleetRequestHandler, build_server
+from control_room.shell.state import NotifyCallable
 from tests.conftest import write_session_file
 
 
@@ -27,7 +28,11 @@ def _spawn_sleeper() -> subprocess.Popen:
 
 @contextmanager
 def _running_server(
-    tmp_path: Path, *, poll_interval: float = 0.05, index_html: Path | None = None
+    tmp_path: Path,
+    *,
+    poll_interval: float = 0.05,
+    index_html: Path | None = None,
+    notify: NotifyCallable | None = None,
 ) -> Iterator[str]:
     page = index_html or (tmp_path / "index.html")
     if index_html is None:
@@ -41,6 +46,10 @@ def _running_server(
         events_dir=tmp_path / "events",
         index_html=page,
         poll_interval=poll_interval,
+        # Never the real `send_desktop_notification` default -- several
+        # tests in this file drive a stream into the M bucket (died,
+        # input-blocked), and a test run must never shell out to `osascript`.
+        notify=notify or (lambda _title, _body: None),
     )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -186,6 +195,98 @@ def test_reconnect_after_a_dropped_connection_never_un_dies_a_died_stream(
     assert reconnected["streams"][0]["attention_state"] == "died"
     assert reconnected["wall"]["need_you"] == 1
     assert reconnected["wall"]["master_caution"] is True
+
+
+def _post(base_url: str, path: str, body: bytes | None = None) -> tuple[int, bytes]:
+    request = urllib.request.Request(base_url + path, data=body, method="POST")
+    if body is not None:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.read()
+
+
+def test_ack_one_stream_clears_its_own_unacknowledged_count(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="s-ack", cwd=str(tmp_path))
+        with _running_server(tmp_path, poll_interval=0.03) as base_url:
+            with urllib.request.urlopen(f"{base_url}/events", timeout=5) as response:
+                proc.kill()
+                proc.wait()
+
+                payload = None
+                for _ in range(GRACE_AFTER_MISSES + 5):
+                    payload = json.loads(_read_one_frame(response))
+                    if payload["streams"][0]["attention_state"] == "died":
+                        break
+                assert payload["streams"][0]["attention_state"] == "died"
+                assert payload["wall"]["unacknowledged_need_you"] == 1
+
+                status, _ = _post(
+                    base_url, "/ack", json.dumps({"stream_id": "interactive:s-ack"}).encode()
+                )
+                assert status == 204
+
+                acked = json.loads(_read_one_frame(response))
+
+            assert acked["wall"]["unacknowledged_need_you"] == 0
+            assert acked["wall"]["master_caution"] is False
+            assert acked["streams"][0]["acknowledged"] is True
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_ack_with_no_body_acknowledges_every_need_you_stream(tmp_path: Path) -> None:
+    sessions_dir = tmp_path / "sessions"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="s-ack-all", cwd=str(tmp_path))
+        with _running_server(tmp_path, poll_interval=0.03) as base_url:
+            with urllib.request.urlopen(f"{base_url}/events", timeout=5) as response:
+                proc.kill()
+                proc.wait()
+
+                payload = None
+                for _ in range(GRACE_AFTER_MISSES + 5):
+                    payload = json.loads(_read_one_frame(response))
+                    if payload["wall"]["need_you"] == 1:
+                        break
+                assert payload["wall"]["need_you"] == 1
+
+                status, _ = _post(base_url, "/ack")  # no body at all -- ack everything
+                assert status == 204
+
+                acked = json.loads(_read_one_frame(response))
+
+            assert acked["wall"]["unacknowledged_need_you"] == 0
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_ack_unknown_stream_id_is_404(tmp_path: Path) -> None:
+    with _running_server(tmp_path) as base_url:
+        with urllib.request.urlopen(f"{base_url}/events", timeout=5):
+            pass  # wait for the poll loop's first tick so latest_payload exists
+        status, _ = _post(base_url, "/ack", json.dumps({"stream_id": "nope"}).encode())
+    assert status == 404
+
+
+def test_ack_malformed_json_body_is_400(tmp_path: Path) -> None:
+    with _running_server(tmp_path) as base_url:
+        status, _ = _post(base_url, "/ack", b"{not json")
+    assert status == 400
+
+
+def test_ack_unknown_path_method_is_404(tmp_path: Path) -> None:
+    with _running_server(tmp_path) as base_url:
+        status, _ = _post(base_url, "/not-ack")
+    assert status == 404
 
 
 def _read_one_frame(response) -> str:

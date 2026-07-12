@@ -135,6 +135,51 @@ def test_classify_liveness_distinguishes_live_stalled_and_error() -> None:
     assert "server not responding" in stalled_by_error["text"]
 
 
+def test_post_ack_sends_no_body_for_ack_all_and_json_body_for_one_stream() -> None:
+    """`postAck(null)` (the wall's own MASTER CAUTION button) must POST with
+    no body -- the server reads a zero-`Content-Length` request as "ack every
+    need-you stream" (`control_room.shell.server._read_ack_stream_id`).
+    `postAck(streamId)` (a tab's own board button) must send exactly
+    `{"stream_id": ...}` as JSON, matching what that same handler parses."""
+    source = _extract_function(_html(), "postAck")
+    js = (
+        source
+        + """
+        const calls = [];
+        global.fetch = function (url, init) {
+          calls.push({ url, init });
+          return Promise.resolve();
+        };
+        postAck(null);
+        postAck("interactive:abc");
+        console.log(JSON.stringify(calls));
+        """
+    )
+    calls = json.loads(_run_node(js))
+    assert calls[0]["url"] == "/ack"
+    assert calls[0]["init"]["method"] == "POST"
+    assert "body" not in calls[0]["init"]
+    assert calls[1]["init"]["headers"]["Content-Type"] == "application/json"
+    assert json.loads(calls[1]["init"]["body"]) == {"stream_id": "interactive:abc"}
+
+
+def test_post_ack_swallows_a_rejected_fetch() -> None:
+    """A network hiccup must never surface as an uncaught rejection -- best-
+    effort, per `postAck`'s own comment in the shipped page."""
+    source = _extract_function(_html(), "postAck")
+    js = (
+        source
+        + """
+        global.fetch = function () { return Promise.reject(new Error("boom")); };
+        let unhandled = false;
+        process.on("unhandledRejection", () => { unhandled = true; });
+        postAck(null);
+        setTimeout(() => { console.log(JSON.stringify({ unhandled })); }, 10);
+        """
+    )
+    assert json.loads(_run_node(js)) == {"unhandled": False}
+
+
 _DOM_STUB = """
 class FakeClassList {
   constructor() { this._set = new Set(); }

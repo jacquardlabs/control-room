@@ -123,7 +123,7 @@
     color: var(--caution-off-ink);
     font-weight: 700;
     letter-spacing: 0.04em;
-    cursor: default;
+    cursor: pointer;
   }
 
   /* `.blink` is the one class both this wall button and every per-tab
@@ -322,7 +322,7 @@
      always carries the same attention glyph as its strip entry"), but a
      multi-instrument protocol board (an epic with several stories) can have
      its own caution state independent of the rest of the fleet. */
-  .board .master-caution { margin: 0.25rem 0; }
+  .board .master-caution { margin: 0.25rem 0; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -339,13 +339,15 @@
       </span>
     </div>
     <!-- A real, focusable button (DESIGN.md: "gauges and caution are real
-         buttons") -- deliberately without a click handler yet. Acknowledging
-         is `notifications-ack`'s story (issue #6): it owns the ack store
-         that survives a restart and the debounce/re-notify rules. Wiring a
-         click here first would mean two competing, unsynced ack mechanisms
-         once that story lands. `aria-pressed` stays "false" for the same
-         reason: nothing is ever acknowledged yet, so "false" is the honest
-         current state, not a placeholder. -->
+         buttons"). Acknowledges every currently-need-you stream at once
+         (POST /ack with no body -- see notifications-ack's server route);
+         a single tab's own board carries the matching per-tab affordance
+         (`control_room.board.render`'s own "master-caution" button, wired
+         below via event delegation on #panels). Never mutates the DOM
+         itself on click: the next SSE frame (within one poll interval, the
+         same bar this story's acceptance criteria name) is what actually
+         reflects the ack -- server truth only, never client-invented state
+         (`control_room.shell.payload`'s own docstring). -->
     <button type="button" id="master-caution" class="master-caution" aria-pressed="false" aria-label="MASTER CAUTION">
       MASTER CAUTION <span id="caution-count">0</span>
     </button>
@@ -415,6 +417,7 @@
       document.getElementById("count-need-you").textContent = payload.wall.need_you;
       cautionCount.textContent = payload.wall.unacknowledged_need_you;
       masterCaution.classList.toggle("blink", payload.wall.master_caution);
+      masterCaution.setAttribute("aria-pressed", String(payload.wall.unacknowledged_need_you === 0));
       masterCaution.setAttribute(
         "aria-label",
         payload.wall.master_caution
@@ -528,6 +531,39 @@
       var tab = document.getElementById(idAttr("tab", streamId));
       if (tab) tab.focus();
     }
+
+    // Acknowledge: POST /ack and let the next SSE frame reflect it -- never
+    // toggle any class/attribute here ourselves. `streamId` omitted acks
+    // every currently-need-you stream at once (the wall's own MASTER
+    // CAUTION button); a network hiccup is swallowed on purpose -- the
+    // blink just keeps blinking until the owner tries again or a later
+    // frame catches up, never a page-level error over a best-effort action.
+    function postAck(streamId) {
+      var init = { method: "POST" };
+      if (streamId) {
+        init.headers = { "Content-Type": "application/json" };
+        init.body = JSON.stringify({ stream_id: streamId });
+      }
+      fetch("/ack", init).catch(function () {});
+    }
+
+    masterCaution.addEventListener("click", function () {
+      postAck(null);
+    });
+
+    // One delegated listener covers every board's own per-tab MASTER
+    // CAUTION button (`control_room.board.render`'s markup), present and
+    // future -- boards are replaced wholesale on every `board_html` change
+    // (see `upsertTab`), so a per-button listener would need re-attaching
+    // on every single re-render; delegation on the stable `#panels`
+    // container never does.
+    panels.addEventListener("click", function (event) {
+      var button = event.target.closest(".board .master-caution");
+      if (!button) return;
+      var section = button.closest(".board[data-stream-id]");
+      if (!section) return;
+      postAck(section.dataset.streamId);
+    });
 
     // Pure, DOM-independent: which tab index a keyboard key moves focus to,
     // given the currently-focused index and the tab count. `null` means

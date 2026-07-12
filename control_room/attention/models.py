@@ -66,6 +66,14 @@ class AttentionSource(StrEnum):
 
     HOOK = "hook"
     POLL = "poll"
+    BOARD = "board"
+    """`control_room.board.elevate.elevate_event`'s provenance: a `parked`
+    verdict read from a board-protocol ledger, never produced by hook/poll
+    detection itself (this module's own `AttentionState.PARKED` docstring).
+    Kept distinct from HOOK/POLL so a caller inspecting `source` can tell
+    "the generic detector confirmed this" apart from "the board schema
+    supplied this" -- the same provenance instinct HOOK-vs-POLL already
+    serves, extended to the one state neither can produce."""
 
 
 class AttentionEvent(BaseModel):

@@ -51,3 +51,13 @@ def control_room_home() -> Path:
 def attention_events_dir() -> Path:
     """Where the attention hook script appends one JSONL event log per stream."""
     return control_room_home() / "attention-events"
+
+
+def ack_state_path() -> Path:
+    """Where `control_room.attention.ack.AckStore` persists acknowledge/notify
+    bookkeeping -- one JSON file, not one-per-stream (unlike the event log):
+    it's read and rewritten as a whole on every ack/notify decision, small
+    enough that one file with an atomic replace is simpler than per-stream
+    files with no natural single-writer boundary (the HTTP ack endpoint and
+    the poll loop both touch it, from different threads)."""
+    return control_room_home() / "ack-state.json"
