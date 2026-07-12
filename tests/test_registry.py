@@ -13,7 +13,13 @@ import sys
 
 from control_room.models import LiveState, StreamKind
 from control_room.registry import GONE_AFTER_MISSES, GRACE_AFTER_MISSES, StreamRegistry
-from tests.conftest import add_linked_worktree, make_main_repo, write_job, write_session_file
+from tests.conftest import (
+    add_linked_worktree,
+    make_main_repo,
+    write_job,
+    write_session_file,
+    write_session_workflow,
+)
 
 
 def _spawn_sleeper() -> subprocess.Popen:
@@ -161,6 +167,35 @@ def test_aged_out_job_stays_gone_when_its_state_file_is_never_deleted(tmp_path):
     # across many more polls, not just the one immediately after age-out.
     for _ in range(10):
         assert registry.poll() == []
+
+
+def test_a_workflow_tool_run_appears_alongside_its_dispatching_session(tmp_path):
+    """The story's own acceptance criterion ("1 Workflow run... appear[s]
+    within one poll interval") was previously verified only through
+    `~/.claude/jobs/`'s `template: "workflow"` shape (see
+    test_five_concurrent_streams_all_appear_in_one_poll above) -- never
+    through a real Workflow-tool call's actual on-disk shape, which lives
+    under `<project>/<session>/workflows/`, not `~/.claude/jobs/` at all.
+    Regression for a real reported gap: a session running Workflow tool
+    calls showed neither in control-room, only the session's own tab."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    projects_dir = tmp_path / "projects"
+    write_session_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_abc",
+        workflow_name="epic-driver",
+    )
+    registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
+
+    (record,) = registry.poll()
+
+    assert record.id == "workflow:wf_abc"
+    assert record.kind == StreamKind.WORKFLOW_RUN
+    assert record.live_state == LiveState.LIVE
 
 
 def test_streams_map_to_worktrees_and_projects_correctly(tmp_path):

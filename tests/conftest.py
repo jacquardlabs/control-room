@@ -115,3 +115,47 @@ def write_job(
         encoding="utf-8",
     )
     return job_dir / "state.json"
+
+
+def write_session_workflow(
+    projects_dir: Path,
+    *,
+    project_dir_name: str,
+    session_id: str,
+    cwd: str,
+    run_id: str,
+    workflow_name: str = "epic-driver",
+    status: str = "running",
+    git_branch: str | None = None,
+) -> Path:
+    """Build a session transcript (enough for `cctx_discovery` to resolve its
+    cwd/branch) plus one Workflow-tool run file nested under it, matching the
+    real on-disk shape: `<projects_dir>/<project>/<session_id>.jsonl` (the
+    transcript) and `<projects_dir>/<project>/<session_id>/workflows/<run_id>.json`
+    (the run) -- confirmed against real `~/.claude/projects` data, 2026-07.
+    """
+    project_dir = projects_dir / project_dir_name
+    project_dir.mkdir(parents=True, exist_ok=True)
+
+    transcript_entry = {
+        "sessionId": session_id,
+        "cwd": cwd,
+        "timestamp": "2026-07-12T12:00:00.000Z",
+    }
+    if git_branch is not None:
+        transcript_entry["gitBranch"] = git_branch
+    (project_dir / f"{session_id}.jsonl").write_text(
+        json.dumps(transcript_entry) + "\n", encoding="utf-8"
+    )
+
+    workflows_dir = project_dir / session_id / "workflows"
+    workflows_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "runId": run_id,
+        "workflowName": workflow_name,
+        "status": status,
+        "startTime": 1783876394416,
+    }
+    path = workflows_dir / f"{run_id}.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path

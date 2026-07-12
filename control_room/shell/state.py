@@ -150,7 +150,7 @@ class FleetState:
         ack_path: Path | None = None,
         notify: NotifyCallable | None = None,
     ) -> None:
-        self._registry = StreamRegistry(sessions_dir, jobs_dir)
+        self._registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
         self._event_store = EventLogStore(events_dir)
         # Colocated with `events_dir`'s own parent (control-room's local
         # state root, `control_room.paths.control_room_home()` in

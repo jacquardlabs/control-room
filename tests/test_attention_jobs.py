@@ -1,5 +1,8 @@
-"""Poll-fallback classification for background jobs -- the sole detection
-path for streams that can't fire hooks at all (design doc)."""
+"""Poll-fallback classification for background jobs and Workflow-tool runs --
+the sole detection path for streams that can't fire hooks at all (design
+doc). The two discoverers name the same concept under two different keys
+(`state` for a daemon job, `status` for a Workflow-tool run) -- this
+classifier reads either."""
 
 from __future__ import annotations
 
@@ -39,3 +42,31 @@ def test_unrecognized_state_degrades_to_grinding_not_a_guess() -> None:
 
 def test_missing_state_field_degrades_to_grinding() -> None:
     assert classify_job_record({}).state == AttentionState.GRINDING
+
+
+def test_workflow_run_completed_status_is_done() -> None:
+    """A Workflow-tool run reports `status`, not `state` -- confirmed
+    against real `<session>/workflows/<run>.json` data, 2026-07."""
+    verdict = classify_job_record({"status": "completed", "workflowName": "epic-driver"})
+    assert verdict.state == AttentionState.DONE
+
+
+def test_workflow_run_killed_status_is_died() -> None:
+    """`killed` (a run stopped mid-flight) is confirmed against real
+    Workflow-tool run data, 2026-07 -- distinct from `failed` (ended in
+    error) but both read as `died`."""
+    verdict = classify_job_record({"status": "killed"})
+    assert verdict.state == AttentionState.DIED
+    assert verdict.reason
+
+
+def test_workflow_run_running_status_is_grinding() -> None:
+    assert classify_job_record({"status": "running"}).state == AttentionState.GRINDING
+
+
+def test_state_field_wins_over_status_when_both_present() -> None:
+    """Never actually co-occurs in real data (one shape or the other, never
+    both) -- pinned anyway so the precedence is a decision, not an accident
+    of `or` evaluation order."""
+    verdict = classify_job_record({"state": "done", "status": "running"})
+    assert verdict.state == AttentionState.DONE

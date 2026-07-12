@@ -19,6 +19,7 @@ from pathlib import Path
 
 from control_room.discovery.interactive import discover_interactive_sessions, pid_is_alive
 from control_room.discovery.jobs import discover_jobs, job_activity_mtime
+from control_room.discovery.workflows import discover_session_workflows
 from control_room.models import LiveState, StreamKind, StreamRecord
 
 GRACE_AFTER_MISSES = 2
@@ -50,9 +51,12 @@ def _grade(consecutive_misses: int) -> LiveState:
 class StreamRegistry:
     """Holds liveness bookkeeping across polls. Not thread-safe -- call from one loop."""
 
-    def __init__(self, sessions_dir: Path, jobs_dir: Path) -> None:
+    def __init__(
+        self, sessions_dir: Path, jobs_dir: Path, *, projects_dir: Path | None = None
+    ) -> None:
         self._sessions_dir = sessions_dir
         self._jobs_dir = jobs_dir
+        self._projects_dir = projects_dir
         self._known: dict[str, StreamRecord] = {}
         self._last_job_mtime: dict[str, float] = {}
 
@@ -141,6 +145,7 @@ class StreamRegistry:
         return [
             *discover_interactive_sessions(self._sessions_dir, now=now),
             *discover_jobs(self._jobs_dir, now=now),
+            *discover_session_workflows(self._projects_dir, now=now),
         ]
 
     def _has_evidence_of_life(self, stream_id: str, record: StreamRecord) -> bool:

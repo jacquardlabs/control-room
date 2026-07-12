@@ -3,9 +3,12 @@
 Background tasks can't fire Claude Code's own hooks at all (design doc,
 "Notifications + acknowledge": "Disk-tail polling remains the detection
 path for streams that don't or can't fire hooks (background tasks...)")
--- their own `state.json` (already read by `control_room.discovery.jobs`)
-is the sole signal here, self-reported by the daemon rather than inferred
-from parsing.
+-- their own state file (already read by `control_room.discovery.jobs` or
+`control_room.discovery.workflows`) is the sole signal here, self-reported
+by the daemon/harness rather than inferred from parsing. The two
+discoverers name the same concept under two different keys -- a daemon job
+writes `state`, a Workflow-tool run writes `status` -- so this classifier
+reads either.
 """
 
 from __future__ import annotations
@@ -14,29 +17,31 @@ from control_room.attention.models import AttentionState
 from control_room.attention.transcripts import TailVerdict
 
 _DONE_STATES = frozenset({"done", "completed", "succeeded"})
-"""Only "done" has been observed in real `~/.claude/jobs/*/state.json` data
-(2026-07, while building this); "completed"/"succeeded" are defensive
-synonyms, unverified against a real example."""
+"""`done` (daemon jobs) and `completed` (Workflow-tool runs) are both
+confirmed against real on-disk data (2026-07); `succeeded` stays a
+defensive synonym, unverified against a real example of either shape."""
 
-_FAILED_STATES = frozenset({"failed", "error", "crashed"})
-"""Unverified against real data -- no failing job was available to inspect
-while building this. Included defensively, same posture as
-`control_room.discovery.jobs.classify_job_kind`'s own documented
-limitation: named explicitly rather than silently assumed.
-"""
+_FAILED_STATES = frozenset({"failed", "error", "crashed", "killed"})
+"""`failed` and `killed` are confirmed against real Workflow-tool run data
+(2026-07 -- a run stopped mid-flight reports `status: "killed"`, one ended
+in error reports `"failed"`). `error`/`crashed` remain defensive synonyms,
+unverified against a real example of either shape."""
 
 
 def classify_job_record(raw: dict) -> TailVerdict:
-    """Classify a job's self-reported `state` field into an attention state.
+    """Classify a job's self-reported `state`/`status` field into an attention state.
 
-    Anything not confidently recognized -- including any state name we
-    haven't verified means "blocked on a human," and including a missing
-    `state` field entirely -- degrades to `grinding`. This is the
-    anti-false-amber invariant applied to job-state classification: a job
-    daemon that starts reporting some new state string this detector
-    doesn't know yet must never read as a false amber.
+    Anything not confidently recognized -- including a state name we
+    haven't verified means "blocked on a human," and including both fields
+    missing entirely -- degrades to `grinding`. This is the anti-false-amber
+    invariant applied to job-state classification: a job daemon or Workflow
+    run reporting some new state string this detector doesn't know yet
+    must never read as a false amber. A live Workflow run's own `status`
+    (e.g. `"running"`) is exactly this unrecognized case today -- it isn't
+    enumerated above because it doesn't need to be; it already degrades to
+    the correct `grinding` without a dedicated branch.
     """
-    state = raw.get("state")
+    state = raw.get("state") or raw.get("status")
 
     if state in _DONE_STATES:
         return TailVerdict(AttentionState.DONE)
