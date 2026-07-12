@@ -37,23 +37,42 @@ to be enforced.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from control_room.attention.ack import AckStore
 from control_room.attention.detector import resolve_attention
 from control_room.attention.models import AttentionEvent, AttentionState
+from control_room.attention.notify import evaluate as evaluate_notification
 from control_room.attention.store import EventLogStore
 from control_room.board.bucket import WallBucket, wall_bucket
 from control_room.board.dispatch import resolve_board_view
+from control_room.board.elevate import elevate_event
 from control_room.board.render import render_board
 from control_room.models import StreamRecord
+from control_room.notifier import format_notification
 from control_room.registry import StreamRegistry
 from control_room.wall import WallSummary, compute_wall_summary
 
 _TERMINAL_STATES = frozenset({AttentionState.DIED, AttentionState.DONE})
 """Once true, never re-derived -- see this module's docstring."""
+
+NotifyCallable = Callable[[str, str], None]
+
+
+def _no_op_notify(title: str, message: str) -> None:
+    """Default `notify` -- deliberately inert.
+
+    Only `control_room.shell.server.FleetHTTPServer` (the process actually
+    meant to run as the owner's server) wires in the real
+    `control_room.notifier.send_desktop_notification`. Every other
+    `FleetState` construction -- this module's own test suite included --
+    must never shell out to `osascript` just because a test happened to
+    drive a stream into the M bucket.
+    """
 
 
 class StreamSnapshot(BaseModel):
@@ -72,6 +91,11 @@ class StreamSnapshot(BaseModel):
     stream: StreamRecord
     event: AttentionEvent
     board_html: str
+    acknowledged: bool
+    """Whether `event`'s current identity (state + reason) has already been
+    acknowledged (`control_room.attention.ack.AckStore`) -- computed once
+    here, in step with `board_html`, so `control_room.shell.payload` never
+    re-derives it."""
 
 
 class FleetSnapshot(BaseModel):
@@ -85,8 +109,11 @@ class FleetSnapshot(BaseModel):
 
 
 class FleetState:
-    """Owns the two in-memory-only facts described above. Not thread-safe --
-    call from one loop only (mirrors `StreamRegistry`'s own contract).
+    """Owns the in-memory-only facts described above, plus the disk-backed
+    ack/notify-dedup store (`control_room.attention.ack.AckStore`). Not
+    thread-safe for `poll()` -- call from one loop only (mirrors
+    `StreamRegistry`'s own contract); `acknowledge()` is the one exception,
+    documented on itself.
 
     `control_room.shell.server.FleetHTTPServer` owns exactly one instance
     for the lifetime of the server process and advances it from exactly one
@@ -102,11 +129,29 @@ class FleetState:
     because that *is* a new `FleetHTTPServer` and therefore a new
     `FleetState` -- restart losing only in-memory bookkeeping, never
     disk-observable truth, is the acceptance criterion this story asks for.
+    Acknowledge state is the one deliberate exception to "restart loses
+    in-memory bookkeeping": it's disk-backed (`AckStore`) precisely so it
+    *does* survive a restart (issue #6's acceptance criteria, verbatim).
     """
 
-    def __init__(self, sessions_dir: Path, jobs_dir: Path, events_dir: Path) -> None:
+    def __init__(
+        self,
+        sessions_dir: Path,
+        jobs_dir: Path,
+        events_dir: Path,
+        *,
+        ack_path: Path | None = None,
+        notify: NotifyCallable | None = None,
+    ) -> None:
         self._registry = StreamRegistry(sessions_dir, jobs_dir)
         self._event_store = EventLogStore(events_dir)
+        # Colocated with `events_dir`'s own parent (control-room's local
+        # state root, `control_room.paths.control_room_home()` in
+        # production) when not given explicitly -- keeps every test that
+        # already isolates `events_dir` under a `tmp_path` isolating the ack
+        # file the same way, with no call site needing to change.
+        self._ack_store = AckStore(ack_path or events_dir.parent / "ack-state.json")
+        self._notify = notify or _no_op_notify
         self._previous_event: dict[str, AttentionEvent] = {}
 
     def poll(self, *, now: datetime | None = None) -> FleetSnapshot:
@@ -115,29 +160,69 @@ class FleetState:
 
         snapshots = []
         events = []
+        acknowledged_by_id: dict[str, bool] = {}
         for stream in streams:
-            event = self._resolve(stream, now=now)
+            raw_event = self._resolve(stream, now=now)
+            board_view = resolve_board_view(stream, raw_event)
+            # Elevate a board-protocol `parked` instrument onto the stream's
+            # own top-level event -- the generic detector can never produce
+            # `parked` itself (see `control_room.board.elevate`'s module
+            # docstring), so without this a background epic's park would
+            # never reach the wall tally, MASTER CAUTION, or a notification.
+            event = elevate_event(raw_event, board_view)
             self._previous_event[stream.id] = event
             events.append(event)
 
-            board_view = resolve_board_view(stream, event)
+            bucket = wall_bucket(event.state)
+            record = self._ack_store.get(stream.id)
+            acknowledged_by_id[stream.id] = record.is_acknowledged(event)
+
+            decision = evaluate_notification(event, bucket, record, now=now)
+            self._ack_store.put(stream.id, decision.record)
+            if decision.should_fire:
+                self._fire_notification(stream, event)
+
             snapshots.append(
-                StreamSnapshot(stream=stream, event=event, board_html=render_board(board_view))
+                StreamSnapshot(
+                    stream=stream,
+                    event=event,
+                    board_html=render_board(board_view, acknowledged=acknowledged_by_id[stream.id]),
+                    acknowledged=acknowledged_by_id[stream.id],
+                )
             )
 
         # A stream the registry dropped this tick (aged out, not protected)
         # carries no fresh event -- drop its stale remembered state too, so
         # a same-id stream appearing later starts from `grinding` again
-        # rather than inheriting a long-gone stream's last state.
+        # rather than inheriting a long-gone stream's last state. The ack
+        # store gets the same treatment, for the same reason.
         live_ids = {s.id for s in streams}
         for stale_id in [sid for sid in self._previous_event if sid not in live_ids]:
             del self._previous_event[stale_id]
+        self._ack_store.prune(live_ids)
 
         return FleetSnapshot(
             generated_at=now,
-            wall=compute_wall_summary(events),
+            wall=compute_wall_summary(
+                events, is_acknowledged=lambda e: acknowledged_by_id.get(e.stream_id, False)
+            ),
             streams=tuple(snapshots),
         )
+
+    def acknowledge(self, stream_id: str, *, state: AttentionState, reason: str | None) -> None:
+        """Record that the owner acknowledged `stream_id`'s given identity.
+
+        Called from `control_room.shell.server`'s `/ack` HTTP handler --
+        a different thread than `poll()`'s. Safe to call concurrently with
+        `poll()` because it only ever delegates to `AckStore`, which owns
+        its own lock; it never touches `_previous_event` or any other
+        `FleetState`-private, single-loop-only bookkeeping.
+        """
+        self._ack_store.acknowledge(stream_id, state=state, reason=reason)
+
+    def _fire_notification(self, stream: StreamRecord, event: AttentionEvent) -> None:
+        title, body = format_notification(stream.label, event.state, event.reason)
+        self._notify(title, body)
 
     def _resolve(self, stream: StreamRecord, *, now: datetime) -> AttentionEvent:
         """One stream's current AttentionEvent -- carried forward unchanged

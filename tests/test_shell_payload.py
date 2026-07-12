@@ -38,7 +38,11 @@ def test_payload_round_trips_through_json_with_expected_fields():
     snapshot = FleetSnapshot(
         generated_at=stream.first_seen,
         wall=compute_wall_summary([event]),
-        streams=(StreamSnapshot(stream=stream, event=event, board_html="<section>x</section>"),),
+        streams=(
+            StreamSnapshot(
+                stream=stream, event=event, board_html="<section>x</section>", acknowledged=False
+            ),
+        ),
     )
 
     payload = build_fleet_payload(snapshot, poll_interval_seconds=3.0)
@@ -54,6 +58,7 @@ def test_payload_round_trips_through_json_with_expected_fields():
     assert item["live_state"] == LiveState.LIVE.value
     assert item["board_html"] == "<section>x</section>"
     assert item["bucket"] == "M"  # input-blocked -> M, via control_room.board.bucket.wall_bucket
+    assert item["acknowledged"] is False
 
 
 def test_payload_bucket_is_none_for_done_and_grinding_is_n():
@@ -79,8 +84,15 @@ def test_payload_bucket_is_none_for_done_and_grinding_is_n():
         generated_at=done_stream.first_seen,
         wall=compute_wall_summary([done_event, grinding_event]),
         streams=(
-            StreamSnapshot(stream=done_stream, event=done_event, board_html="<section/>"),
-            StreamSnapshot(stream=grinding_stream, event=grinding_event, board_html="<section/>"),
+            StreamSnapshot(
+                stream=done_stream, event=done_event, board_html="<section/>", acknowledged=False
+            ),
+            StreamSnapshot(
+                stream=grinding_stream,
+                event=grinding_event,
+                board_html="<section/>",
+                acknowledged=False,
+            ),
         ),
     )
 
@@ -89,6 +101,32 @@ def test_payload_bucket_is_none_for_done_and_grinding_is_n():
     by_id = {item.id: item for item in payload.streams}
     assert by_id["job:done-one"].bucket is None
     assert by_id["interactive:grinding-one"].bucket == "N"
+
+
+def test_payload_carries_acknowledged_through_from_the_snapshot():
+    """`build_fleet_payload` reads `acknowledged` straight off `StreamSnapshot`
+    -- it never re-derives it (`control_room.attention.ack.AckStore` is the
+    one owner of that comparison, in `control_room.shell.state.FleetState`)."""
+    stream = _stream()
+    event = AttentionEvent(
+        stream_id=stream.id,
+        state=AttentionState.PARKED,
+        reason="NEEDS DISCUSSION",
+        source=AttentionSource.BOARD,
+        at=stream.first_seen,
+    )
+    snapshot = FleetSnapshot(
+        generated_at=stream.first_seen,
+        wall=compute_wall_summary([event]),
+        streams=(
+            StreamSnapshot(stream=stream, event=event, board_html="<section/>", acknowledged=True),
+        ),
+    )
+
+    payload = build_fleet_payload(snapshot, poll_interval_seconds=3.0)
+
+    (item,) = payload.streams
+    assert item.acknowledged is True
 
 
 def test_empty_fleet_payload_has_empty_streams_tuple():

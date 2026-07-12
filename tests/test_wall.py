@@ -66,12 +66,40 @@ def test_done_streams_inflate_no_count():
     assert summary.need_you == 0
 
 
-def test_unacknowledged_need_you_equals_need_you_until_ack_store_exists():
-    """No ack mechanism exists yet (notifications-ack, issue #6) -- every
-    M-bucket stream is unacknowledged by construction until then."""
+def test_unacknowledged_need_you_equals_need_you_with_no_ack_predicate():
+    """Omitting `is_acknowledged` (most tests, and every call site before
+    notifications-ack existed) treats every M-bucket stream as
+    unacknowledged -- the same behavior this function always had."""
     events = [_event("a", AttentionState.DIED), _event("b", AttentionState.PARKED, reason="r")]
     summary = compute_wall_summary(events)
     assert summary.unacknowledged_need_you == summary.need_you == 2
+
+
+def test_acknowledged_m_bucket_stream_does_not_count_as_unacknowledged():
+    events = [_event("a", AttentionState.DIED), _event("b", AttentionState.PARKED, reason="r")]
+    summary = compute_wall_summary(events, is_acknowledged=lambda e: e.stream_id == "a")
+    assert summary.need_you == 2
+    assert summary.unacknowledged_need_you == 1
+
+
+def test_master_caution_is_off_once_every_need_you_stream_is_acknowledged():
+    """ "Blink is reserved for unacknowledged needs-you -- with everything
+    acked, nothing moves repeatedly" (issue #6's acceptance criteria)."""
+    events = [_event("a", AttentionState.PARKED, reason="r")]
+    summary = compute_wall_summary(events, is_acknowledged=lambda _event: True)
+    assert summary.need_you == 1
+    assert summary.unacknowledged_need_you == 0
+    assert summary.master_caution is False
+
+
+def test_is_acknowledged_is_never_consulted_for_n_or_r_buckets():
+    """Acknowledge is a needs-you concept only -- a predicate that (buggily)
+    claimed everything is unacknowledged must not somehow inflate N/R."""
+    events = [_event("a", AttentionState.GRINDING), _event("b", AttentionState.REVIEW_READY)]
+    summary = compute_wall_summary(events, is_acknowledged=lambda _event: False)
+    assert summary.grinding == 1
+    assert summary.review_ready == 1
+    assert summary.unacknowledged_need_you == 0
 
 
 def test_aggregate_burn_defaults_to_none_not_a_fabricated_zero():

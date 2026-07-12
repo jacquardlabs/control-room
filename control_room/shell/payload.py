@@ -38,6 +38,13 @@ class StreamPayload(BaseModel):
     `static/index.html` is exactly the duplication that pre-mortem names as
     a drift risk -- if a new attention state were ever added, only this one
     function would need updating, not a client-side twin of it."""
+    acknowledged: bool
+    """Whether the owner has already acknowledged this stream's *current*
+    identity (state + reason) -- `control_room.attention.ack.AckStore`'s own
+    comparison, computed once here so the client never re-implements it. A
+    stream outside the M bucket is trivially `False` (there is nothing to
+    acknowledge); the client only reads this to decide whether a tab's own
+    acknowledge affordance should already read as pressed."""
 
 
 class WallPayload(BaseModel):
@@ -75,6 +82,7 @@ def build_fleet_payload(snapshot: FleetSnapshot, *, poll_interval_seconds: float
                 live_state=item.stream.live_state,
                 board_html=item.board_html,
                 bucket=wall_bucket(item.event.state),
+                acknowledged=item.acknowledged,
             )
             for item in snapshot.streams
         ),

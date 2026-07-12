@@ -35,9 +35,20 @@ Then merge `control_room/attention/hooks.json`'s `"hooks"` block into your
 way — background tasks can't fire hooks at all regardless of this step, and
 this step only makes detection faster for the streams that can.
 
+## Notifications and acknowledging
+
+An OS notification (`osascript`, macOS only for now) fires once per needs-you
+state change per stream -- never a repeat for the same unacknowledged state,
+and debounced against a detector flickering near a classification boundary.
+Acknowledge from the wall's MASTER CAUTION button (every need-you stream at
+once) or a tab's own board button (that stream only); acknowledging stops the
+blink but never touches the event log -- it's local render state, and it
+survives a server restart on its own (`~/.control-room/ack-state.json`, or
+`$CONTROL_ROOM_HOME/ack-state.json` if set).
+
 ## Status
 
-T1 build underway, behind the portfolio WIP cap: stream discovery, generic attention detection, and board-protocol enrichment have shipped (see `control_room/attention/` and `control_room/board/`, above); the fleet shell (server, wall, tabs, SSE -- `control_room/shell/`) is in review; notifications with an acknowledge loop and per-stream cost vitals are still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
+T1 build underway, behind the portfolio WIP cap: stream discovery, generic attention detection, board-protocol enrichment, the fleet shell (server, wall, tabs, SSE), and notifications with an acknowledge loop have shipped (see `control_room/attention/`, `control_room/board/`, and `control_room/shell/`, above); per-stream cost vitals is still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
 
 ## License
 

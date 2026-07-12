@@ -53,14 +53,17 @@ threads never block process shutdown.
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from control_room import paths
-from control_room.shell.payload import FleetPayload, build_fleet_payload
-from control_room.shell.state import FleetState
+from control_room.board.bucket import WallBucket
+from control_room.notifier import send_desktop_notification
+from control_room.shell.payload import FleetPayload, StreamPayload, build_fleet_payload
+from control_room.shell.state import FleetState, NotifyCallable
 
 logger = logging.getLogger(__name__)
 
@@ -88,7 +91,16 @@ class FleetHTTPServer(ThreadingHTTPServer):
     from anywhere else. Every `/events` connection only ever reads the
     latest cached payload through `_await_next_frame`, guarded by
     `_snapshot_cv`; no connection thread ever calls `fleet_state.poll()`
-    directly.
+    directly. `POST /ack` is the one exception, calling `fleet_state.
+    acknowledge()` directly from its own request thread -- safe per that
+    method's own contract (delegates only to the lock-guarded `AckStore`).
+
+    Defaults `notify` to the real `control_room.notifier.
+    send_desktop_notification` -- this class represents the actual running
+    server, where firing a real OS notification is the point. Tests that
+    construct a `FleetHTTPServer` directly and might drive a stream into the
+    M bucket must override this explicitly (see `tests/test_shell_server.py`)
+    so a test run never shells out to `osascript`.
     """
 
     def __init__(
@@ -101,6 +113,8 @@ class FleetHTTPServer(ThreadingHTTPServer):
         events_dir: Path,
         index_html: Path = INDEX_HTML,
         poll_interval: float = DEFAULT_POLL_INTERVAL,
+        ack_path: Path | None = None,
+        notify: NotifyCallable | None = None,
     ) -> None:
         super().__init__(server_address, handler_cls)
         self.sessions_dir = sessions_dir
@@ -109,7 +123,13 @@ class FleetHTTPServer(ThreadingHTTPServer):
         self.index_html = index_html
         self.poll_interval = poll_interval
 
-        self.fleet_state = FleetState(sessions_dir, jobs_dir, events_dir)
+        self.fleet_state = FleetState(
+            sessions_dir,
+            jobs_dir,
+            events_dir,
+            ack_path=ack_path,
+            notify=notify or send_desktop_notification,
+        )
         self._snapshot_cv = threading.Condition()
         self._latest_payload: FleetPayload | None = None
         # Must start below _serve_events' own initial `after_seq = -1`, not
@@ -143,6 +163,13 @@ class FleetHTTPServer(ThreadingHTTPServer):
                 self._snapshot_cv.notify_all()
             if self._stop_polling.wait(self.poll_interval):
                 break
+
+    def latest_payload(self) -> FleetPayload | None:
+        """The most recently built payload, or `None` before the poll loop's
+        first tick -- read under the same lock `_poll_loop` writes under, so
+        the `/ack` handler (a different thread) never sees a torn read."""
+        with self._snapshot_cv:
+            return self._latest_payload
 
     def await_next_frame(self, after_seq: int) -> tuple[FleetPayload, int] | None:
         """Block until a snapshot newer than `after_seq` is available and
@@ -179,6 +206,69 @@ class FleetRequestHandler(BaseHTTPRequestHandler):
             self._serve_events()
         else:
             self.send_error(404, "not found")
+
+    def do_POST(self) -> None:
+        if self.path == "/ack":
+            self._handle_ack()
+        else:
+            self.send_error(404, "not found")
+
+    def _handle_ack(self) -> None:
+        """Acknowledge one stream (`{"stream_id": "..."}`) or, with no
+        `stream_id` (an empty body, or none at all -- the wall's own MASTER
+        CAUTION button POSTs this way), every currently-M-bucket stream at
+        once. The identity acknowledged is always read from the server's own
+        latest served payload, never from the request body -- an owner
+        acking a stream can't accidentally acknowledge an identity that was
+        never actually observed (see `FleetState.acknowledge`'s own note)."""
+        try:
+            stream_id = self._read_ack_stream_id()
+        except ValueError as exc:
+            self.send_error(400, str(exc))
+            return
+
+        latest = self.server.latest_payload()
+        if latest is None:
+            self._no_content()
+            return
+
+        if stream_id is not None:
+            item = next((s for s in latest.streams if s.id == stream_id), None)
+            if item is None:
+                self.send_error(404, "unknown stream")
+                return
+            self._acknowledge(item)
+        else:
+            for item in latest.streams:
+                if item.bucket is WallBucket.M:
+                    self._acknowledge(item)
+
+        self._no_content()
+
+    def _acknowledge(self, item: StreamPayload) -> None:
+        self.server.fleet_state.acknowledge(item.id, state=item.attention_state, reason=item.reason)
+
+    def _read_ack_stream_id(self) -> str | None:
+        length = int(self.headers.get("Content-Length") or 0)
+        if length == 0:
+            return None
+        raw = self.rfile.read(length)
+        if not raw.strip():
+            return None
+        try:
+            body = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError("malformed JSON body") from exc
+        if not isinstance(body, dict):
+            raise ValueError("body must be a JSON object")
+        stream_id = body.get("stream_id")
+        if stream_id is not None and not isinstance(stream_id, str):
+            raise ValueError("stream_id must be a string")
+        return stream_id
+
+    def _no_content(self) -> None:
+        self.send_response(204)
+        self.end_headers()
 
     def _serve_static_page(self) -> None:
         try:
@@ -219,6 +309,7 @@ def build_server(
     sessions_dir: Path | None = None,
     jobs_dir: Path | None = None,
     events_dir: Path | None = None,
+    ack_path: Path | None = None,
     index_html: Path = INDEX_HTML,
     poll_interval: float = DEFAULT_POLL_INTERVAL,
 ) -> FleetHTTPServer:
@@ -228,6 +319,7 @@ def build_server(
         sessions_dir=sessions_dir or paths.sessions_dir(),
         jobs_dir=jobs_dir or paths.jobs_dir(),
         events_dir=events_dir or paths.attention_events_dir(),
+        ack_path=ack_path or paths.ack_state_path(),
         index_html=index_html,
         poll_interval=poll_interval,
     )
