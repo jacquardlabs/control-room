@@ -354,6 +354,39 @@ def test_a_workflow_child_whose_session_is_gone_gets_its_own_tab(tmp_path):
     assert snapshot.streams[0].stream.id == "workflow:wf_abc"
 
 
+def test_a_finished_workflow_run_with_no_live_session_never_gets_a_tab(tmp_path):
+    """Reported live: every `done`/`died` Workflow run from up to 24h of past
+    dispatches surfaced as its own tab for a few seconds on every server
+    restart (a fresh server has no interactive sessions yet, so every one
+    of them is an orphan by the check above), before aging out -- a burst
+    of pure-history noise with nothing actionable in it. A *terminal*
+    orphan must never get a tab at all, not even briefly."""
+    projects_dir = tmp_path / "projects"
+    write_session_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-gone",
+        cwd=str(tmp_path),
+        run_id="wf_done",
+        status="completed",
+    )
+    write_session_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-gone-2",
+        cwd=str(tmp_path),
+        run_id="wf_died",
+        status="killed",
+    )
+    state = FleetState(
+        tmp_path / "sessions", tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+    )
+
+    snapshot = state.poll()
+
+    assert snapshot.streams == ()
+
+
 def test_acknowledging_a_folded_panes_elevated_state_stops_the_blink(tmp_path):
     sessions_dir = tmp_path / "sessions"
     projects_dir = tmp_path / "projects"

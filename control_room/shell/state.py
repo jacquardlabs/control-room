@@ -282,6 +282,20 @@ class FleetState:
             if stream.parent_stream_id and stream.parent_stream_id in stream_ids:
                 continue  # folded into its dispatcher's pane below -- no tab/wall entry of its own
 
+            if stream.parent_stream_id and _is_source_terminal(stream):
+                # A dispatched run whose own dispatcher isn't live this tick
+                # (already exited, or -- on a fresh server start -- simply
+                # not yet/never rediscovered) is an orphan; a *terminal* one
+                # is pure history with nothing left to attribute it to.
+                # Reported live: every `done`/`died` run from up to 24h of
+                # past dispatches surfaced as its own flickering tab for a
+                # few seconds on every server restart, before aging out --
+                # a burst of noise with nothing actionable in it. A
+                # still-running orphan is the opposite case (something
+                # might genuinely still need attention with no session to
+                # fold it into) and keeps its own top-level tab, unchanged.
+                continue
+
             display_view = own_views[stream.id]
             display_event = own_events[stream.id]
             display_burn = own_burns[stream.id]
