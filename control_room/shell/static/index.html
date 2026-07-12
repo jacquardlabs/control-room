@@ -296,6 +296,29 @@
     box-shadow: inset 0 2px 0 var(--grinding);
   }
 
+  /* A tab whose stream carries a `parent_stream_id` (e.g. a Workflow run
+     dispatched from an interactive session) renders tucked under its
+     dispatcher instead of reading as an unrelated top-level instrument --
+     reported live (2026-07): two workflow tabs from one session had nothing
+     tying them to it or each other. `control_room.registry`'s own
+     `_tab_sort_key` already places them adjacent in the payload; this is
+     just the visible tie-in, an inset shade plus a connector glyph, not a
+     full tree control -- the tab strip stays flat per DESIGN.md. */
+  .tab[data-parent-id]:not([data-parent-id=""]) {
+    background: var(--bezel-sunk);
+    box-shadow: inset 2px 0 0 var(--bezel-edge);
+    padding-left: 0.6rem;
+  }
+  .tab[data-parent-id]:not([data-parent-id=""])[aria-selected="true"] {
+    background: var(--tab-selected);
+  }
+
+  .tab-connector {
+    color: var(--steel);
+    font-size: 0.75rem;
+  }
+  .tab-connector:empty { display: none; }
+
   .tab-lamp {
     font-size: 0.7rem;
     width: 1em;
@@ -556,9 +579,11 @@
 
     function reconcileTabs(streams) {
       var seenIds = {};
+      var labelsById = {};
+      streams.forEach(function (stream) { labelsById[stream.id] = stream.label; });
       streams.forEach(function (stream) {
         seenIds[stream.id] = true;
-        upsertTab(stream);
+        upsertTab(stream, labelsById);
       });
 
       // Remove tabs/panels for streams that vanished this tick (aged out).
@@ -571,6 +596,15 @@
         }
       });
 
+      // Reorder the strip to match the server's own grouping
+      // (control_room.registry's `_tab_sort_key` -- a dispatched stream
+      // sorts immediately after its dispatcher). `appendChild` on a node
+      // already in the document moves it rather than cloning it, so this
+      // never loses a tab's or panel's live state, just its position.
+      streams.forEach(function (stream) {
+        tabbar.appendChild(document.getElementById(idAttr("tab", stream.id)));
+      });
+
       emptyState.hidden = streams.length > 0;
 
       if (selectedId === null || !seenIds[selectedId]) {
@@ -579,7 +613,7 @@
       applySelection();
     }
 
-    function upsertTab(stream) {
+    function upsertTab(stream, labelsById) {
       var tabId = idAttr("tab", stream.id);
       var panelId = idAttr("panel", stream.id);
       var tab = document.getElementById(tabId);
@@ -593,7 +627,8 @@
         tab.setAttribute("role", "tab");
         tab.setAttribute("aria-controls", panelId);
         tab.dataset.streamId = stream.id;
-        tab.innerHTML = '<span class="tab-lamp" aria-hidden="true"></span>' +
+        tab.innerHTML = '<span class="tab-connector" aria-hidden="true"></span>' +
+          '<span class="tab-lamp" aria-hidden="true"></span>' +
           '<span class="tab-label"></span>' +
           '<span class="tab-state-text"></span>' +
           '<span class="tab-burn"></span>';
@@ -613,6 +648,13 @@
 
       tab.dataset.state = stream.attention_state;
       tab.dataset.liveState = stream.live_state;
+      tab.dataset.parentId = stream.parent_stream_id || "";
+      var parentLabel = stream.parent_stream_id ? labelsById[stream.parent_stream_id] : null;
+      tab.querySelector(".tab-connector").textContent = stream.parent_stream_id ? "↳" : "";
+      tab.setAttribute(
+        "aria-label",
+        parentLabel ? stream.label + " — part of " + parentLabel : stream.label
+      );
       tab.querySelector(".tab-lamp").textContent = lampGlyph(bucket);
       tab.querySelector(".tab-label").textContent = stream.label;
       tab.querySelector(".tab-state-text").textContent = stream.attention_state;

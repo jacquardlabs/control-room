@@ -25,6 +25,10 @@ class StreamPayload(BaseModel):
     id: str
     label: str
     kind: StreamKind
+    parent_stream_id: str | None
+    """`control_room.models.StreamRecord`'s own field, passed straight
+    through -- the client groups/indents tabs sharing a dispatcher off this,
+    never re-deriving lineage itself."""
     attention_state: AttentionState
     reason: str | None
     live_state: LiveState
@@ -78,6 +82,7 @@ def build_fleet_payload(snapshot: FleetSnapshot, *, poll_interval_seconds: float
                 id=item.stream.id,
                 label=item.stream.label,
                 kind=item.stream.kind,
+                parent_stream_id=item.stream.parent_stream_id,
                 attention_state=item.event.state,
                 reason=item.event.reason,
                 live_state=item.stream.live_state,

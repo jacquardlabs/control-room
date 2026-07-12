@@ -50,6 +50,8 @@ class StreamRecord(BaseModel):
     Field groups:
       - identity: `id`, `kind`, `label`
       - location: `cwd`, `project_root`, `project_name`, `worktree_name`, `git_branch`
+      - lineage: `parent_stream_id` -- the id of the stream that dispatched
+        this one, when known
       - liveness bookkeeping: `live_state`, `consecutive_misses`, `first_seen`, `last_seen`
       - provenance: `source_path`, the on-disk artifact this record was read from
     """
@@ -62,6 +64,15 @@ class StreamRecord(BaseModel):
     project_name: str | None = None
     worktree_name: str | None = None
     git_branch: str | None = None
+    parent_stream_id: str | None = None
+    """The id of the stream that dispatched this one -- e.g. a Workflow-tool
+    run's dispatching interactive session (`interactive:<session-id>`).
+    `None` for a stream nothing else dispatched (an interactive session, a
+    daemon-launched job). Reported live (2026-07): two Workflow runs from one
+    session rendered as flat, unrelated tabs with no way to tell they shared
+    a dispatcher -- this is discovery's own fact about provenance, the same
+    category as `project_root`/`worktree_name` above, not a derived opinion
+    about grouping (that stays downstream, in sort order and rendering)."""
     pid: int | None = None
     raw_status: str | None = None
     live_state: LiveState = LiveState.LIVE

@@ -248,6 +248,56 @@ def test_a_completed_workflow_still_ages_out_normally(tmp_path):
     assert results == []
 
 
+def test_workflow_runs_group_next_to_their_dispatching_session(tmp_path):
+    """Regression, reported live during dogfooding: a session dispatching
+    two Workflow tool calls read as three unrelated, scattered tabs -- pure
+    id-alphabetical sort (`interactive:` < `job:` < `workflow:`) grouped
+    every interactive session together and every workflow run together,
+    never a session next to the runs it dispatched. A second, unrelated
+    session (whose own id sorts between the two, proving this isn't just
+    incidental alphabetical luck) must not land between them."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    other_proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_session_file(sessions_dir, pid=other_proc.pid, session_id="sess-2", cwd=str(tmp_path))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_alpha",
+        )
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_beta",
+        )
+        registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
+
+        records = registry.poll()
+
+        assert [r.id for r in records] == [
+            "interactive:sess-1",
+            "workflow:wf_alpha",
+            "workflow:wf_beta",
+            "interactive:sess-2",
+        ]
+        assert records[1].parent_stream_id == "interactive:sess-1"
+        assert records[2].parent_stream_id == "interactive:sess-1"
+        assert records[3].parent_stream_id is None
+    finally:
+        proc.kill()
+        proc.wait()
+        other_proc.kill()
+        other_proc.wait()
+
+
 def test_streams_map_to_worktrees_and_projects_correctly(tmp_path):
     main_root = make_main_repo(tmp_path / "control-room", branch="main")
     worktree = add_linked_worktree(

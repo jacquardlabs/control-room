@@ -127,6 +127,13 @@ def _read_workflow_file(
         project_name=worktree_info.project_name if worktree_info else None,
         worktree_name=worktree_info.worktree_name if worktree_info else None,
         git_branch=worktree_info.git_branch if worktree_info else git_branch,
+        # `interactive:<session_id>` is exactly the id
+        # `discover_interactive_sessions` gives the dispatching session's own
+        # record -- the two discoverers already share this scheme
+        # independently (session file `<pid>.json`'s own `sessionId`, here
+        # the workflow file's own parent directory name), so no lookup is
+        # needed to compute it, only to know it's even worth stating.
+        parent_stream_id=f"interactive:{session_id}",
         pid=None,
         raw_status=raw.get("status"),
         first_seen=now,

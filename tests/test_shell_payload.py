@@ -158,6 +158,33 @@ def test_payload_carries_acknowledged_through_from_the_snapshot():
     assert item.acknowledged is True
 
 
+def test_payload_carries_parent_stream_id_through_from_the_record():
+    """The client groups/indents a tab off this field (see `static/index.html`'s
+    `reconcileTabs`/`upsertTab`) -- it must be the wire-visible fact, not
+    something dropped between `StreamRecord` and the wire."""
+    stream = _stream(
+        id="workflow:wf_abc", kind=StreamKind.WORKFLOW_RUN, parent_stream_id="interactive:sess-1"
+    )
+    event = AttentionEvent(
+        stream_id=stream.id,
+        state=AttentionState.GRINDING,
+        source=AttentionSource.POLL,
+        at=stream.first_seen,
+    )
+    snapshot = FleetSnapshot(
+        generated_at=stream.first_seen,
+        wall=compute_wall_summary([event]),
+        streams=(
+            StreamSnapshot(stream=stream, event=event, board_html="<section/>", acknowledged=False),
+        ),
+    )
+
+    payload = build_fleet_payload(snapshot, poll_interval_seconds=3.0)
+
+    (item,) = payload.streams
+    assert item.parent_stream_id == "interactive:sess-1"
+
+
 def test_empty_fleet_payload_has_empty_streams_tuple():
     snapshot = FleetSnapshot(
         generated_at=datetime.now(UTC),

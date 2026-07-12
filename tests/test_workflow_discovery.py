@@ -35,6 +35,7 @@ def test_discovers_one_record_per_workflow_run(tmp_path):
     assert record.pid is None
     assert record.cwd == str(tmp_path)
     assert record.raw_status == "running"
+    assert record.parent_stream_id == "interactive:sess-1"
 
 
 def test_two_workflows_from_the_same_session_both_appear(tmp_path):
@@ -137,6 +138,9 @@ def test_unresolvable_session_defaults_to_empty_cwd_not_a_crash(tmp_path):
 
     assert record.cwd == ""
     assert record.project_root is None
+    # parent_stream_id comes straight from the file's own path, independent
+    # of whether the session's cwd/branch could be resolved.
+    assert record.parent_stream_id == "interactive:sess-unknown"
 
 
 def test_session_lookup_scans_once_per_poll_not_once_per_workflow_file(tmp_path, monkeypatch):

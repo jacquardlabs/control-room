@@ -50,6 +50,22 @@ def _grade(consecutive_misses: int) -> LiveState:
     return LiveState.GRACE if consecutive_misses >= GRACE_AFTER_MISSES else LiveState.LIVE
 
 
+def _tab_sort_key(record: StreamRecord) -> tuple[str, bool, str]:
+    """Group a dispatched stream (e.g. a Workflow run) next to its dispatcher
+    instead of scattering across the tab strip in plain id order.
+
+    Reported live (2026-07): a session's own tab and its two dispatched
+    Workflow runs sorted apart -- `interactive:` before `job:` before
+    `workflow:` alphabetically -- with nothing tying them together. Grouping
+    by `parent_stream_id or id` clusters every stream sharing a dispatcher
+    (including the dispatcher's own record, whose group key is its own id);
+    the boolean puts the dispatcher first within its group, children after,
+    ordered by their own id.
+    """
+    group = record.parent_stream_id or record.id
+    return (group, record.parent_stream_id is not None, record.id)
+
+
 class StreamRegistry:
     """Holds liveness bookkeeping across polls. Not thread-safe -- call from one loop."""
 
@@ -117,7 +133,7 @@ class StreamRegistry:
         # is what makes "ages out" a one-way trip instead of a repeating
         # cycle; only `survivors` -- filtered here -- is ever returned.
         self._known = merged
-        return sorted(survivors.values(), key=lambda r: r.id)
+        return sorted(survivors.values(), key=_tab_sort_key)
 
     def _advance(self, stream_id: str, discovered: StreamRecord, *, now: datetime) -> StreamRecord:
         alive_now = self._has_evidence_of_life(stream_id, discovered)
