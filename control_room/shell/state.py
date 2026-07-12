@@ -45,6 +45,7 @@ from pydantic import BaseModel, ConfigDict
 
 from control_room.attention.ack import AckRecord, AckStore
 from control_room.attention.detector import resolve_attention
+from control_room.attention.jobs import is_terminal_status
 from control_room.attention.models import AttentionEvent, AttentionState
 from control_room.attention.notify import evaluate as evaluate_notification
 from control_room.attention.store import EventLogStore
@@ -64,6 +65,31 @@ _TERMINAL_STATES = frozenset({AttentionState.DIED, AttentionState.DONE})
 """Once true, never re-derived -- see this module's docstring."""
 
 NotifyCallable = Callable[[str, str], None]
+
+
+def _is_source_terminal(stream: StreamRecord) -> bool:
+    """Whether `stream`'s own self-reported status (a job/Workflow run's
+    `state`/`status` field) is terminal -- same vocabulary
+    `control_room.registry`'s own liveness check reads, applied here to
+    decide fold-supersession rather than mtime-staleness. Always `False`
+    for a kind with no such field (e.g. an interactive session), matching
+    `is_terminal_status`'s own "missing/unrecognized -> not terminal"
+    default."""
+    return is_terminal_status({"status": stream.raw_status})
+
+
+def _source_mtime(stream: StreamRecord) -> float:
+    """`stream`'s own source file's mtime, or `0.0` if it can't be read --
+    a proxy for "how recently was this dispatched/active," used only to
+    rank siblings dispatched by the same parent against each other, never
+    as an absolute cutoff. Degrading to the oldest-possible value on a read
+    failure only ever makes an unreadable stream *less* likely to win a
+    supersession race, never more -- the safe direction for a signal that's
+    otherwise just missing."""
+    try:
+        return Path(stream.source_path).stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _no_op_notify(title: str, message: str) -> None:
@@ -179,10 +205,30 @@ class FleetState:
         # top-level tab below (`parent_stream_id in stream_ids` is False),
         # same "no file, no guess" posture as the rest of discovery -- never
         # silently dropping a stream just because its dispatcher is gone.
+        streams_by_id = {s.id: s for s in streams}
         children_by_parent: dict[str, list[str]] = {}
         for stream in streams:
             if stream.parent_stream_id and stream.parent_stream_id in stream_ids:
                 children_by_parent.setdefault(stream.parent_stream_id, []).append(stream.id)
+
+        # A session commonly dispatches many Workflow runs over its life,
+        # one after another, not just concurrently -- reported live
+        # (2026-07): a session's pane read `died` from an hours-old, already-
+        # resolved run while a brand-new workflow it later dispatched was
+        # actively most of the way through its own agents. A run that's
+        # still working is always relevant; a *terminal* one only still is
+        # if nothing newer has been dispatched since (by its own file's
+        # mtime) -- an older terminal sibling is superseded and dropped from
+        # the fold entirely, so it can't keep coloring a session that has
+        # since moved on.
+        for parent_id, child_ids in children_by_parent.items():
+            newest_mtime = max(_source_mtime(streams_by_id[c]) for c in child_ids)
+            children_by_parent[parent_id] = [
+                c
+                for c in child_ids
+                if not _is_source_terminal(streams_by_id[c])
+                or _source_mtime(streams_by_id[c]) >= newest_mtime
+            ]
 
         # Pass 1: every stream's own, unmerged facts -- attention, board
         # view, burn, ack, notification. Entirely independent of grouping,

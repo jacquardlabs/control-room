@@ -11,9 +11,11 @@ fresh `FleetState` pointed at the same disk reconstructs the same picture a
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
+import time
 
 from control_room.attention.models import AttentionSource, AttentionState
 from control_room.board.ledger import SUPPORTED_SCHEMA_VERSION
@@ -378,6 +380,88 @@ def test_acknowledging_a_folded_panes_elevated_state_stops_the_blink(tmp_path):
         acked = state.poll()
         assert acked.wall.master_caution is False
         assert acked.streams[0].acknowledged is True
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_an_old_dead_workflow_run_stops_coloring_a_session_once_superseded(tmp_path):
+    """Reported live: a session's pane read `died` from an hours-old,
+    already-resolved Workflow run while a brand-new workflow the same
+    session had since dispatched was actively most of the way through its
+    own agents -- a session commonly dispatches many runs over its life,
+    one after another, not just concurrently. A terminal run only still
+    colors its dispatcher's pane if nothing newer has been dispatched since;
+    an old, superseded one is dropped from the fold entirely."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        old_path = write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_old",
+            status="killed",
+        )
+        an_hour_ago = time.time() - 3600
+        os.utime(old_path, (an_hour_ago, an_hour_ago))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_new",
+            status="running",
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        snapshot = state.poll()
+
+        assert len(snapshot.streams) == 1
+        (item,) = snapshot.streams
+        assert item.event.state == AttentionState.GRINDING  # not DIED -- superseded
+        assert 'data-instrument-id="workflow:wf_new"' in item.board_html
+        assert 'data-instrument-id="workflow:wf_old"' not in item.board_html
+        assert snapshot.wall.need_you == 0
+        assert snapshot.wall.master_caution is False
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_a_just_died_workflow_run_still_colors_its_session_when_nothing_is_newer(tmp_path):
+    """The supersession rule above must not blanket-suppress every terminal
+    child -- only one an actually-newer sibling has superseded. A single
+    dead run with nothing newer dispatched since is still the most recent
+    thing that happened and must still surface, exactly as the original
+    fold/elevate fix intended."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_abc",
+            status="killed",
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        snapshot = state.poll()
+
+        (item,) = snapshot.streams
+        assert item.event.state == AttentionState.DIED
+        assert 'data-instrument-id="workflow:wf_abc"' in item.board_html
     finally:
         proc.kill()
         proc.wait()
