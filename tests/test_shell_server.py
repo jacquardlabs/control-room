@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -14,8 +16,13 @@ from pathlib import Path
 
 import pytest
 
+from control_room.registry import GRACE_AFTER_MISSES
 from control_room.shell.server import FleetHTTPServer, FleetRequestHandler, build_server
 from tests.conftest import write_session_file
+
+
+def _spawn_sleeper() -> subprocess.Popen:
+    return subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
 
 
 @contextmanager
@@ -127,6 +134,58 @@ def test_empty_fleet_still_streams_a_heartbeat_frame(tmp_path: Path) -> None:
     payload = json.loads(frame)
     assert payload["streams"] == []
     assert payload["wall"]["grinding"] == 0
+
+
+def test_reconnect_after_a_dropped_connection_never_un_dies_a_died_stream(
+    tmp_path: Path,
+) -> None:
+    """The audit-critical regression: a native `EventSource` reconnect (a
+    brand-new HTTP connection to an *already-running* server -- exactly
+    what the browser's own auto-reconnect does after any transient drop,
+    since `static/index.html`'s `onerror` deliberately never calls
+    `.close()`) must not revert an already-resolved `died` stream back to
+    `grinding`.
+
+    Before this fix, `_serve_events` handed every new connection its own
+    fresh `FleetState`, so a reconnect was indistinguishable from a
+    brand-new tab: `_previous_event` and the registry's own liveness
+    bookkeeping both started over from nothing, silently un-dying the
+    stream for the several poll intervals it took to re-earn
+    `GRACE_AFTER_MISSES` misses from scratch -- MASTER CAUTION going dark
+    and the needs-you count dropping for a stream that had, in fact, died.
+    """
+    sessions_dir = tmp_path / "sessions"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="s-reconnect", cwd=str(tmp_path))
+
+        with _running_server(tmp_path, poll_interval=0.03) as base_url:
+            with urllib.request.urlopen(f"{base_url}/events", timeout=5) as first:
+                first_state = json.loads(_read_one_frame(first))["streams"][0]["attention_state"]
+                assert first_state == "grinding"
+
+                proc.kill()
+                proc.wait()
+
+                died_state = None
+                for _ in range(GRACE_AFTER_MISSES + 5):
+                    died_state = json.loads(_read_one_frame(first))["streams"][0]["attention_state"]
+                    if died_state == "died":
+                        break
+                assert died_state == "died"
+            # `first`'s `with` block just closed the connection -- a real
+            # drop, not a clean client shutdown the server can tell apart
+            # from a browser's silent reconnect.
+
+            with urllib.request.urlopen(f"{base_url}/events", timeout=5) as second:
+                reconnected = json.loads(_read_one_frame(second))
+    finally:
+        proc.kill()
+        proc.wait()
+
+    assert reconnected["streams"][0]["attention_state"] == "died"
+    assert reconnected["wall"]["need_you"] == 1
+    assert reconnected["wall"]["master_caution"] is True
 
 
 def _read_one_frame(response) -> str:

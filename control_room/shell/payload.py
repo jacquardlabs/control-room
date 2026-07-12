@@ -15,6 +15,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from control_room.attention.models import AttentionState
+from control_room.board.bucket import WallBucket, wall_bucket
 from control_room.models import LiveState, StreamKind
 from control_room.shell.state import FleetSnapshot
 from control_room.wall import WallSummary
@@ -28,6 +29,15 @@ class StreamPayload(BaseModel):
     reason: str | None
     live_state: LiveState
     board_html: str
+    bucket: WallBucket | None
+    """The stream's wall bucket (N/R/M), or `None` for `done` -- computed
+    once here via `control_room.board.bucket.wall_bucket`, the single owner
+    of the seven-state-to-bucket mapping (epic pre-mortem #3). The client
+    reads this field rather than re-deriving the mapping from
+    `attention_state` itself: a second, hand-copied mapping in
+    `static/index.html` is exactly the duplication that pre-mortem names as
+    a drift risk -- if a new attention state were ever added, only this one
+    function would need updating, not a client-side twin of it."""
 
 
 class WallPayload(BaseModel):
@@ -64,6 +74,7 @@ def build_fleet_payload(snapshot: FleetSnapshot, *, poll_interval_seconds: float
                 reason=item.event.reason,
                 live_state=item.stream.live_state,
                 board_html=item.board_html,
+                bucket=wall_bucket(item.event.state),
             )
             for item in snapshot.streams
         ),

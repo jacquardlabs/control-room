@@ -37,7 +37,7 @@ this step only makes detection faster for the streams that can.
 
 ## Status
 
-T1 build underway, behind the portfolio WIP cap: stream discovery and generic attention detection have shipped (see `control_room/attention/`, above); board-protocol enrichment, tabs + fleet strip, and notifications are still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
+T1 build underway, behind the portfolio WIP cap: stream discovery, generic attention detection, and board-protocol enrichment have shipped (see `control_room/attention/` and `control_room/board/`, above); the fleet shell (server, wall, tabs, SSE -- `control_room/shell/`) is in review; notifications with an acknowledge loop and per-stream cost vitals are still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
 
 ## License
 

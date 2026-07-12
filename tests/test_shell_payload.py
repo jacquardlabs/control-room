@@ -53,6 +53,42 @@ def test_payload_round_trips_through_json_with_expected_fields():
     assert item["reason"] == "permission prompt"
     assert item["live_state"] == LiveState.LIVE.value
     assert item["board_html"] == "<section>x</section>"
+    assert item["bucket"] == "M"  # input-blocked -> M, via control_room.board.bucket.wall_bucket
+
+
+def test_payload_bucket_is_none_for_done_and_grinding_is_n():
+    """`build_fleet_payload` computes `bucket` itself (never re-derived
+    client-side) -- `done` inflates no wall bucket, `grinding` is N."""
+    done_stream = _stream(id="job:done-one")
+    done_event = AttentionEvent(
+        stream_id=done_stream.id,
+        state=AttentionState.DONE,
+        reason=None,
+        source=AttentionSource.POLL,
+        at=done_stream.first_seen,
+    )
+    grinding_stream = _stream(id="interactive:grinding-one")
+    grinding_event = AttentionEvent(
+        stream_id=grinding_stream.id,
+        state=AttentionState.GRINDING,
+        reason=None,
+        source=AttentionSource.POLL,
+        at=grinding_stream.first_seen,
+    )
+    snapshot = FleetSnapshot(
+        generated_at=done_stream.first_seen,
+        wall=compute_wall_summary([done_event, grinding_event]),
+        streams=(
+            StreamSnapshot(stream=done_stream, event=done_event, board_html="<section/>"),
+            StreamSnapshot(stream=grinding_stream, event=grinding_event, board_html="<section/>"),
+        ),
+    )
+
+    payload = build_fleet_payload(snapshot, poll_interval_seconds=3.0)
+
+    by_id = {item.id: item for item in payload.streams}
+    assert by_id["job:done-one"].bucket is None
+    assert by_id["interactive:grinding-one"].bucket == "N"
 
 
 def test_empty_fleet_payload_has_empty_streams_tuple():

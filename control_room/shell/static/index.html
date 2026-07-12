@@ -29,7 +29,13 @@
     --caution-off-bg: #e7e9ee;
     --caution-off-ink: var(--ink-dim);
     --live-dot: #15803d;
-    --stalled-dot: #b91c1c;
+    /* Deliberately not `--died`: liveness is server-connectivity, a
+       different concept from the attention taxonomy, and DESIGN.md
+       reserves red for `died` alone ("the only red") -- reusing it here
+       would let a stalled *connection* read as a died *stream*. `--ink`
+       (the page's own neutral, already near-max contrast in both themes)
+       carries "stalled" through weight/text, not a second red. */
+    --stalled-dot: var(--ink);
     --connecting-dot: #9aa1ad;
   }
 
@@ -58,7 +64,7 @@
       --caution-off-bg: #1b1f28;
       --caution-off-ink: var(--ink-dim);
       --live-dot: #4ad07f;
-      --stalled-dot: #f26161;
+      --stalled-dot: var(--ink);
       --connecting-dot: #6a7180;
     }
   }
@@ -180,18 +186,13 @@
   }
 
   .liveness[data-state="live"] .liveness-dot { background: var(--live-dot); }
-  .liveness[data-state="stalled"] .liveness-dot {
-    background: var(--stalled-dot);
-    animation: pulse 1s ease-in-out infinite;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .liveness[data-state="stalled"] .liveness-dot { animation: none; }
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.35; }
-  }
-  .liveness[data-state="stalled"] { color: var(--died); font-weight: 600; }
+  /* Static, not pulsing: DESIGN.md reserves repeated motion for MASTER
+     CAUTION alone ("blink is reserved for unacknowledged needs-you --
+     nothing else moves repeatedly"). "Stalled" is carried by the dot's
+     fixed neutral fill, bold weight, and the literal "server not
+     responding" text below -- never a second animated signal. */
+  .liveness[data-state="stalled"] .liveness-dot { background: var(--stalled-dot); }
+  .liveness[data-state="stalled"] { color: var(--ink); font-weight: 600; }
 
   /* ---------- Tabs ---------- */
 
@@ -233,6 +234,20 @@
   .tab[data-state="done"] .tab-lamp { color: var(--done); }
 
   .tab-state-text { font-size: 0.75rem; color: var(--ink-dim); }
+
+  /* Discovery's own liveness bookkeeping (control_room.models.LiveState) is
+     a different axis from the attention taxonomy above: a stream can lose
+     its process after finishing cleanly (review-ready/done/parked) with no
+     attention-state consequence at all, per `control_room.attention.
+     liveness`'s "losing it after review-ready/done/parked is just normal
+     cleanup." DESIGN.md still asks for it to be visible ("dead streams
+     gray then age out visibly") -- so `grace` dims the tab. Explicitly
+     excluded from `died`: DESIGN.md's own anti-pattern list names
+     "softening died" directly, and `died` streams stay at `grace` forever
+     by design (the "never disappearing while amber" protection), so
+     without this exclusion the one state DESIGN.md is most emphatic about
+     keeping undimmed would be the one state that's *always* dimmed. */
+  .tab[data-live-state="grace"]:not([data-state="died"]) { opacity: 0.6; }
 
   /* ---------- Panels ---------- */
 
@@ -367,12 +382,11 @@
       return bucket === "M" ? "●" : "○";
     }
 
-    function bucketFor(state) {
-      if (state === "grinding") return "N";
-      if (state === "review-ready") return "R";
-      if (state === "input-blocked" || state === "question-pending" || state === "parked" || state === "died") return "M";
-      return null;
-    }
+    // The seven-state-attention-to-N/R/M-bucket mapping is owned once, server
+    // side, by control_room.board.bucket.wall_bucket (epic pre-mortem #3:
+    // duplicating this mapping here was a named drift risk) -- every stream
+    // payload already carries its resolved `bucket`, so this page never
+    // re-derives the mapping from `attention_state` itself.
 
     function render(payload) {
       document.getElementById("count-grinding").textContent = payload.wall.grinding;
@@ -425,7 +439,7 @@
       var tabId = idAttr("tab", stream.id);
       var panelId = idAttr("panel", stream.id);
       var tab = document.getElementById(tabId);
-      var bucket = bucketFor(stream.attention_state);
+      var bucket = stream.bucket;
 
       if (!tab) {
         tab = document.createElement("button");
@@ -453,17 +467,26 @@
       }
 
       tab.dataset.state = stream.attention_state;
+      tab.dataset.liveState = stream.live_state;
       tab.querySelector(".tab-lamp").textContent = lampGlyph(bucket);
       tab.querySelector(".tab-label").textContent = stream.label;
       tab.querySelector(".tab-state-text").textContent = stream.attention_state;
 
       var panel = document.getElementById(panelId);
-      // Only the currently-visible panel needs its markup refreshed every
-      // tick -- an unselected tab's board still gets fresh HTML the moment
-      // it becomes selected (reconcileTabs re-renders on every payload, and
-      // upsertTab always writes board_html here regardless of visibility,
-      // so switching tabs never shows stale content).
-      panel.innerHTML = stream.board_html;
+      // Skip the DOM write when this tick's board_html is byte-identical to
+      // what's already rendered. A tick fires every poll interval whether
+      // or not any given stream actually changed, so an unconditional
+      // innerHTML rewrite here churned the DOM (and dropped any
+      // in-progress focus/selection/scroll position inside the panel) on
+      // every single tick, for every stream, changed or not -- including
+      // hidden panels nobody is looking at. A stream whose board_html DID
+      // change still gets fresh markup the moment this tick sees it,
+      // whether or not its tab happens to be selected right now, so
+      // switching tabs still never shows stale content.
+      if (panel._lastBoardHtml !== stream.board_html) {
+        panel._lastBoardHtml = stream.board_html;
+        panel.innerHTML = stream.board_html;
+      }
     }
 
     function applySelection() {
@@ -483,24 +506,51 @@
       if (tab) tab.focus();
     }
 
+    // Pure, DOM-independent: which tab index a keyboard key moves focus to,
+    // given the currently-focused index and the tab count. `null` means
+    // "not a navigation key" -- extracted out of `onTabKeydown` (which
+    // still does exactly this, calling straight through) so it's testable
+    // without a DOM (see tests/test_shell_static_page_js.py).
+    function nextTabIndex(key, index, count) {
+      if (key === "ArrowRight") return (index + 1) % count;
+      if (key === "ArrowLeft") return (index - 1 + count) % count;
+      if (key === "Home") return 0;
+      if (key === "End") return count - 1;
+      return null;
+    }
+
     function onTabKeydown(event) {
       var tabs = Array.prototype.slice.call(tabbar.children);
       var index = tabs.indexOf(event.currentTarget);
       if (index === -1) return;
 
-      var nextIndex = null;
-      if (event.key === "ArrowRight") nextIndex = (index + 1) % tabs.length;
-      else if (event.key === "ArrowLeft") nextIndex = (index - 1 + tabs.length) % tabs.length;
-      else if (event.key === "Home") nextIndex = 0;
-      else if (event.key === "End") nextIndex = tabs.length - 1;
-      else if (event.key === "Enter" || event.key === " ") {
+      if (event.key === "Enter" || event.key === " ") {
         selectTab(event.currentTarget.dataset.streamId);
         event.preventDefault();
         return;
-      } else return;
+      }
+
+      var nextIndex = nextTabIndex(event.key, index, tabs.length);
+      if (nextIndex === null) return;
 
       event.preventDefault();
       selectTab(tabs[nextIndex].dataset.streamId);
+    }
+
+    // Pure, DOM-independent: given how long it's been since the last frame,
+    // the server's own tick cadence, and whether the transport itself
+    // errored, decide the liveness state/text pair -- extracted out of
+    // `updateLiveness` (which still does exactly this, calling straight
+    // through) so it's testable without a DOM (see
+    // tests/test_shell_static_page_js.py).
+    function classifyLiveness(elapsedSeconds, staleThreshold, connectionErrored) {
+      if (connectionErrored || elapsedSeconds > staleThreshold) {
+        return {
+          state: "stalled",
+          text: "server not responding — last update " + Math.round(elapsedSeconds) + "s ago",
+        };
+      }
+      return { state: "live", text: "updated " + Math.round(elapsedSeconds) + "s ago" };
     }
 
     function updateLiveness() {
@@ -511,14 +561,9 @@
       }
       var elapsedSeconds = (Date.now() - lastMessageAt) / 1000;
       var staleThreshold = Math.max(pollIntervalSeconds * 3, 5);
-      if (connectionErrored || elapsedSeconds > staleThreshold) {
-        liveness.dataset.state = "stalled";
-        livenessText.textContent =
-          "server not responding — last update " + Math.round(elapsedSeconds) + "s ago";
-      } else {
-        liveness.dataset.state = "live";
-        livenessText.textContent = "updated " + Math.round(elapsedSeconds) + "s ago";
-      }
+      var classified = classifyLiveness(elapsedSeconds, staleThreshold, connectionErrored);
+      liveness.dataset.state = classified.state;
+      livenessText.textContent = classified.text;
     }
 
     setInterval(updateLiveness, 1000);
@@ -530,9 +575,21 @@
     } else {
       var source = new EventSource("/events");
       source.onmessage = function (event) {
+        // A malformed or unexpected frame must not silently read as a
+        // healthy connection -- the same "uncertainty never reads as fine"
+        // instinct DESIGN.md applies to attention state applies here to
+        // liveness: catch, report through the existing stalled path, and
+        // leave `lastMessageAt` alone rather than marking a broken tick as
+        // the moment of last successful update.
+        try {
+          render(JSON.parse(event.data));
+        } catch {
+          connectionErrored = true;
+          updateLiveness();
+          return;
+        }
         lastMessageAt = Date.now();
         connectionErrored = false;
-        render(JSON.parse(event.data));
         updateLiveness();
       };
       source.onerror = function () {

@@ -37,9 +37,10 @@ to be enforced.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict
 
 from control_room.attention.detector import resolve_attention
 from control_room.attention.models import AttentionEvent, AttentionState
@@ -55,20 +56,28 @@ _TERMINAL_STATES = frozenset({AttentionState.DIED, AttentionState.DONE})
 """Once true, never re-derived -- see this module's docstring."""
 
 
-@dataclass(frozen=True)
-class StreamSnapshot:
+class StreamSnapshot(BaseModel):
     """One tab's worth of current-truth: the stream, its attention event, and
     its already-rendered board fragment (so the server never re-renders the
-    same tick's HTML twice -- once here, once for the wire payload)."""
+    same tick's HTML twice -- once here, once for the wire payload).
+
+    Pydantic, not a plain dataclass, to match the rest of the
+    stream/attention schema (`StreamRecord`, `AttentionEvent`, `WallSummary`
+    are all `BaseModel`) -- one modeling convention for one pipeline, not
+    two. `frozen=True` keeps the "one snapshot, one tick, never mutated"
+    invariant the dataclass version had."""
+
+    model_config = ConfigDict(frozen=True)
 
     stream: StreamRecord
     event: AttentionEvent
     board_html: str
 
 
-@dataclass(frozen=True)
-class FleetSnapshot:
+class FleetSnapshot(BaseModel):
     """The whole screen, once, for one poll tick."""
+
+    model_config = ConfigDict(frozen=True)
 
     generated_at: datetime
     wall: WallSummary
@@ -77,10 +86,22 @@ class FleetSnapshot:
 
 class FleetState:
     """Owns the two in-memory-only facts described above. Not thread-safe --
-    one instance per SSE connection (mirrors `StreamRegistry`'s own "call
-    from one loop" contract); `control_room.shell.server` gives each
-    connection its own `FleetState`, so two browser tabs never share
-    (or corrupt) each other's bookkeeping.
+    call from one loop only (mirrors `StreamRegistry`'s own contract).
+
+    `control_room.shell.server.FleetHTTPServer` owns exactly one instance
+    for the lifetime of the server process and advances it from exactly one
+    background thread; every `/events` connection (a first load, a second
+    tab, or the browser's own silent reconnect after a transient drop)
+    reads the same cached, already-resolved snapshot rather than calling
+    `poll()` itself. That's deliberate, not incidental: this module's own
+    docstring above explains why terminal states must be carried forward
+    across polls of the *same* state -- an `EventSource` reconnect is a new
+    HTTP connection, not a new server, so it must not see a new
+    `FleetState` either, or the same "silently un-dies a stream" bug
+    recurs one layer up. A real process restart still resets everything,
+    because that *is* a new `FleetHTTPServer` and therefore a new
+    `FleetState` -- restart losing only in-memory bookkeeping, never
+    disk-observable truth, is the acceptance criterion this story asks for.
     """
 
     def __init__(self, sessions_dir: Path, jobs_dir: Path, events_dir: Path) -> None:

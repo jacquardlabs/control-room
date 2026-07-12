@@ -85,6 +85,16 @@ def test_keyboard_tab_switching_handler_present() -> None:
     assert "ArrowRight" in html and "ArrowLeft" in html
 
 
+def test_grace_live_state_dims_a_tab_but_never_a_died_one() -> None:
+    """DESIGN.md: "dead streams gray then age out visibly" (discovery's own
+    `grace` liveness state) -- but never softens `died` itself (a separate
+    named anti-pattern), which the registry keeps at `grace` forever by
+    design (the "never disappearing while amber" protection)."""
+    html = _read()
+    assert "tab.dataset.liveState = stream.live_state" in html
+    assert re.search(r'\[data-live-state="grace"\]:not\(\[data-state="died"\]\)', html)
+
+
 def test_no_ambient_log_or_transcript_surface() -> None:
     """No surface renders streaming/raw transcript text -- the board
     fragment renders instrument state/reason/CAS lines only, and nothing
