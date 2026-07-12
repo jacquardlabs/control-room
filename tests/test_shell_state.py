@@ -20,7 +20,13 @@ from control_room.board.ledger import SUPPORTED_SCHEMA_VERSION
 from control_room.models import LiveState
 from control_room.registry import GONE_AFTER_MISSES, GRACE_AFTER_MISSES
 from control_room.shell.state import FleetState
-from tests.conftest import add_linked_worktree, make_main_repo, write_job, write_session_file
+from tests.conftest import (
+    add_linked_worktree,
+    make_main_repo,
+    write_job,
+    write_session_file,
+    write_session_workflow,
+)
 
 
 def _spawn_sleeper() -> subprocess.Popen:
@@ -206,6 +212,175 @@ def test_previous_state_bookkeeping_does_not_grow_unboundedly(tmp_path):
         state.poll()
 
     assert "job:j1" not in state._previous_event
+
+
+def test_a_workflow_run_folds_into_its_dispatching_sessions_pane(tmp_path):
+    """Reported live (2026-07): a session dispatching a Workflow tool call
+    still showed as two separate, unrelated tabs even once they were merely
+    grouped side by side on the strip. A dispatched stream with a live
+    dispatcher gets no tab/wall entry of its own -- it renders as an extra
+    instrument inside its dispatcher's own pane instead."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_abc",
+            workflow_name="epic-driver",
+            status="running",
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        snapshot = state.poll()
+
+        assert len(snapshot.streams) == 1  # no separate tab for the workflow run
+        (item,) = snapshot.streams
+        assert item.stream.id == "interactive:sess-1"
+        assert 'data-instrument-id="interactive:sess-1"' in item.board_html
+        assert 'data-instrument-id="workflow:wf_abc"' in item.board_html
+        assert snapshot.wall.grinding == 1  # one pane, not one entry per underlying stream
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_a_died_workflow_child_elevates_its_dispatching_sessions_pane(tmp_path):
+    """Reported live: a session dispatching a Workflow run that died still
+    read as a healthy `grinding` tab elsewhere on the strip -- folding a
+    child into its dispatcher's pane must still surface its own real
+    severity there, never silently swallow it."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_abc",
+            status="killed",
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        snapshot = state.poll()
+
+        assert len(snapshot.streams) == 1
+        (item,) = snapshot.streams
+        assert item.stream.id == "interactive:sess-1"
+        assert item.event.state == AttentionState.DIED
+        assert snapshot.wall.need_you == 1
+        assert snapshot.wall.master_caution is True
+
+        # Regression: the dispatcher's *own* remembered state must stay its
+        # true `grinding` -- never permanently latched into the child's
+        # `died` via `_resolve`'s terminal-state stickiness, or a healthy
+        # session would get stuck `died` forever after any Workflow run it
+        # ever dispatched failed, long after that run stopped mattering.
+        assert state._previous_event["interactive:sess-1"].state == AttentionState.GRINDING
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_burn_aggregates_across_a_folded_panes_children(tmp_path, monkeypatch):
+    """A folded child's real spend must still count toward the pane's shown
+    `burn_usd` and the wall's aggregate -- otherwise the number silently
+    undercounts everything the pane actually represents. Monkeypatches
+    `_burn` directly: a Workflow run's own on-disk shape has no `sessionId`
+    field to resolve a real transcript from (a pre-existing, separate gap in
+    cost-vitals, out of scope here) -- this isolates the merge arithmetic
+    itself from that gap."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_abc",
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+        burns = {"interactive:sess-1": 1.5, "workflow:wf_abc": 2.5}
+        monkeypatch.setattr(state, "_burn", lambda stream: burns[stream.id])
+
+        snapshot = state.poll()
+
+        (item,) = snapshot.streams
+        assert item.burn_usd == 4.0
+        assert snapshot.wall.aggregate_burn_usd == 4.0
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_a_workflow_child_whose_session_is_gone_gets_its_own_tab(tmp_path):
+    """A dispatcher that's already aged out/vanished this tick must not
+    silently drop the child it dispatched -- same "no file, no guess"
+    posture as the rest of discovery. It falls through to its own
+    top-level tab instead."""
+    projects_dir = tmp_path / "projects"
+    write_session_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-gone",
+        cwd=str(tmp_path),
+        run_id="wf_abc",
+    )
+    state = FleetState(
+        tmp_path / "sessions", tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+    )
+
+    snapshot = state.poll()
+
+    assert len(snapshot.streams) == 1
+    assert snapshot.streams[0].stream.id == "workflow:wf_abc"
+
+
+def test_acknowledging_a_folded_panes_elevated_state_stops_the_blink(tmp_path):
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_abc",
+            status="killed",
+        )
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        first = state.poll()
+        (item,) = first.streams
+        assert item.event.state == AttentionState.DIED
+        state.acknowledge(item.stream.id, state=item.event.state, reason=item.event.reason)
+
+        acked = state.poll()
+        assert acked.wall.master_caution is False
+        assert acked.streams[0].acknowledged is True
+    finally:
+        proc.kill()
+        proc.wait()
 
 
 def _write_parked_epic(main_root, *, slug: str, story_slug: str, label: str, reason: str) -> None:

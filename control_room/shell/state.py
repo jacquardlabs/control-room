@@ -43,7 +43,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
-from control_room.attention.ack import AckStore
+from control_room.attention.ack import AckRecord, AckStore
 from control_room.attention.detector import resolve_attention
 from control_room.attention.models import AttentionEvent, AttentionState
 from control_room.attention.notify import evaluate as evaluate_notification
@@ -51,7 +51,9 @@ from control_room.attention.store import EventLogStore
 from control_room.board.bucket import WallBucket, wall_bucket
 from control_room.board.dispatch import resolve_board_view
 from control_room.board.elevate import elevate_event
+from control_room.board.models import BoardView
 from control_room.board.render import render_board
+from control_room.board.rollup import merge_child_boards
 from control_room.cost.usage import compute_stream_cost
 from control_room.models import StreamRecord
 from control_room.notifier import format_notification
@@ -165,11 +167,33 @@ class FleetState:
     def poll(self, *, now: datetime | None = None) -> FleetSnapshot:
         now = now or datetime.now(UTC)
         streams = self._registry.poll(is_protected=self._is_protected, now=now)
+        stream_ids = {s.id for s in streams}
 
-        snapshots = []
-        events = []
-        burns: list[float] = []
-        acknowledged_by_id: dict[str, bool] = {}
+        # A dispatched stream (e.g. a Workflow run) whose own dispatcher is
+        # also live this tick renders folded into the dispatcher's own pane
+        # rather than a separate tab -- reported live (2026-07): a session
+        # dispatching two Workflow tool calls still read as three unrelated
+        # things even once the tab strip merely grouped them side by side.
+        # A dispatcher that's aged out/vanished this tick is the one
+        # exception: its children fall through to rendering as their own
+        # top-level tab below (`parent_stream_id in stream_ids` is False),
+        # same "no file, no guess" posture as the rest of discovery -- never
+        # silently dropping a stream just because its dispatcher is gone.
+        children_by_parent: dict[str, list[str]] = {}
+        for stream in streams:
+            if stream.parent_stream_id and stream.parent_stream_id in stream_ids:
+                children_by_parent.setdefault(stream.parent_stream_id, []).append(stream.id)
+
+        # Pass 1: every stream's own, unmerged facts -- attention, board
+        # view, burn, ack, notification. Entirely independent of grouping,
+        # and computed for every stream before pass 2 below reads any of
+        # it, since a parent's merge step needs its children's own facts
+        # regardless of which order `streams` lists them in.
+        own_events: dict[str, AttentionEvent] = {}
+        own_views: dict[str, BoardView] = {}
+        own_burns: dict[str, float | None] = {}
+        own_records: dict[str, AckRecord] = {}
+        own_acknowledged: dict[str, bool] = {}
         for stream in streams:
             raw_event = self._resolve(stream, now=now)
             board_view = resolve_board_view(stream, raw_event)
@@ -179,29 +203,64 @@ class FleetState:
             # docstring), so without this a background epic's park would
             # never reach the wall tally, MASTER CAUTION, or a notification.
             event = elevate_event(raw_event, board_view)
+            own_events[stream.id] = event
+            own_views[stream.id] = board_view
+            # Always the stream's own, unmerged event -- never the
+            # display-only, children-elevated one pass 2 computes below. A
+            # dispatcher's own history/protection (`_resolve`'s "died"/"done"
+            # stickiness, `_is_protected`) must track its own true state, not
+            # a state borrowed from something it happens to have dispatched;
+            # storing the elevated version here would let one dead child
+            # permanently and wrongly latch its dispatcher into `died` too
+            # (see `_resolve`'s terminal-state stickiness).
             self._previous_event[stream.id] = event
-            events.append(event)
 
-            burn_usd = self._burn(stream)
-            if burn_usd is not None:
-                burns.append(burn_usd)
+            own_burns[stream.id] = self._burn(stream)
 
-            bucket = wall_bucket(event.state)
             record = self._ack_store.get(stream.id)
-            acknowledged_by_id[stream.id] = record.is_acknowledged(event)
+            own_records[stream.id] = record
+            own_acknowledged[stream.id] = record.is_acknowledged(event)
 
-            decision = evaluate_notification(event, bucket, record, now=now)
+            decision = evaluate_notification(event, wall_bucket(event.state), record, now=now)
             self._ack_store.put(stream.id, decision.record)
             if decision.should_fire:
                 self._fire_notification(stream, event)
 
+        # Pass 2: one tab/wall entry per top-level stream, folding in any
+        # children discovered above.
+        snapshots = []
+        events = []
+        burns: list[float] = []
+        acknowledged_by_id: dict[str, bool] = {}
+        for stream in streams:
+            if stream.parent_stream_id and stream.parent_stream_id in stream_ids:
+                continue  # folded into its dispatcher's pane below -- no tab/wall entry of its own
+
+            display_view = own_views[stream.id]
+            display_event = own_events[stream.id]
+            display_burn = own_burns[stream.id]
+            acknowledged = own_acknowledged[stream.id]
+            child_ids = children_by_parent.get(stream.id, ())
+            if child_ids:
+                display_view = merge_child_boards(display_view, [own_views[c] for c in child_ids])
+                display_event = elevate_event(display_event, display_view)
+                child_burns = [b for c in child_ids if (b := own_burns[c]) is not None]
+                if display_burn is not None or child_burns:
+                    display_burn = (display_burn or 0.0) + sum(child_burns)
+                acknowledged = own_records[stream.id].is_acknowledged(display_event)
+
+            acknowledged_by_id[stream.id] = acknowledged
+            if display_burn is not None:
+                burns.append(display_burn)
+            events.append(display_event)
+
             snapshots.append(
                 StreamSnapshot(
                     stream=stream,
-                    event=event,
-                    board_html=render_board(board_view, acknowledged=acknowledged_by_id[stream.id]),
-                    burn_usd=burn_usd,
-                    acknowledged=acknowledged_by_id[stream.id],
+                    event=display_event,
+                    board_html=render_board(display_view, acknowledged=acknowledged),
+                    burn_usd=display_burn,
+                    acknowledged=acknowledged,
                 )
             )
 
@@ -210,10 +269,9 @@ class FleetState:
         # a same-id stream appearing later starts from `grinding` again
         # rather than inheriting a long-gone stream's last state. The ack
         # store gets the same treatment, for the same reason.
-        live_ids = {s.id for s in streams}
-        for stale_id in [sid for sid in self._previous_event if sid not in live_ids]:
+        for stale_id in [sid for sid in self._previous_event if sid not in stream_ids]:
             del self._previous_event[stale_id]
-        self._ack_store.prune(live_ids)
+        self._ack_store.prune(stream_ids)
 
         return FleetSnapshot(
             generated_at=now,
