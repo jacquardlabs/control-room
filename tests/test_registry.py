@@ -142,6 +142,27 @@ def test_background_job_ages_out_via_stalled_state_file(tmp_path):
     assert registry.poll() == []
 
 
+def test_aged_out_job_stays_gone_when_its_state_file_is_never_deleted(tmp_path):
+    """Regression: a finished job's `state.json` is never actually removed
+    from disk (the CLI leaves it there) -- only its mtime stops advancing.
+    Once aged out, re-discovering the same still-quiet file on a later poll
+    must not read as a brand-new stream and flicker back to `live`; it must
+    stay gone unless the file shows genuinely new activity."""
+    jobs_dir = tmp_path / "jobs"
+    sessions_dir = tmp_path / "sessions"
+    write_job(jobs_dir, job_id="stall2", cwd=str(tmp_path), state="done")
+    registry = StreamRegistry(sessions_dir, jobs_dir)
+
+    for _ in range(GONE_AFTER_MISSES + 1):
+        results = registry.poll()
+    assert results == []  # aged out, per the test above
+
+    # The file is untouched (no delete, no rewrite) -- confirm it stays gone
+    # across many more polls, not just the one immediately after age-out.
+    for _ in range(10):
+        assert registry.poll() == []
+
+
 def test_streams_map_to_worktrees_and_projects_correctly(tmp_path):
     main_root = make_main_repo(tmp_path / "control-room", branch="main")
     worktree = add_linked_worktree(

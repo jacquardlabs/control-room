@@ -100,7 +100,17 @@ class StreamRegistry:
             if record.consecutive_misses < GONE_AFTER_MISSES or protected(record)
         }
 
-        self._known = survivors
+        # `_known` keeps every stream `_advance` has ever graded -- aged-out
+        # ones included, not just survivors. A job (or session) whose disk
+        # artifact is never deleted after it finishes stays *discoverable*
+        # forever; if aged-out entries were dropped from `_known`, the next
+        # poll's `_advance` would see `previous is None` for it and treat a
+        # merely-quiet, already-graded stream as brand new again -- misses
+        # reset to 0, it flickers back in, ages out again four polls later,
+        # forever. Keeping the graded record (not re-deriving it as fresh)
+        # is what makes "ages out" a one-way trip instead of a repeating
+        # cycle; only `survivors` -- filtered here -- is ever returned.
+        self._known = merged
         return sorted(survivors.values(), key=lambda r: r.id)
 
     def _advance(self, stream_id: str, discovered: StreamRecord, *, now: datetime) -> StreamRecord:
