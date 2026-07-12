@@ -1,0 +1,20 @@
+{
+  "_comment": "Merge this 'hooks' block into ~/.claude/settings.json to enable hook-first attention detection (docs/specs/2026-07-11-t1-design.md). Requires `uv tool install .` (or an editable install) from the control-room repo root, so `control-room-attention-hook` resolves on PATH -- see README.md's 'Enabling hook-first detection' section. Poll-fallback (control_room.attention.jobs / .transcripts) covers every stream without this installed; installing it only makes detection faster, per the design doc's exit-gate timing claim.",
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "", "hooks": [{ "type": "command", "command": "control-room-attention-hook" }] }
+    ],
+    "PostToolUse": [
+      { "matcher": "", "hooks": [{ "type": "command", "command": "control-room-attention-hook" }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "control-room-attention-hook" }] }
+    ],
+    "Notification": [
+      { "hooks": [{ "type": "command", "command": "control-room-attention-hook" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "control-room-attention-hook" }] }
+    ]
+  }
+}

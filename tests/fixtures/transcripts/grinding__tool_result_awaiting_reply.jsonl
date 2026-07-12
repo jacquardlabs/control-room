@@ -1,0 +1,3 @@
+{"type": "user", "timestamp": "2026-07-12T13:41:00.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "check the build"}]}}
+{"type": "assistant", "timestamp": "2026-07-12T13:41:05.000Z", "message": {"model": "claude-sonnet-5", "id": "msg_1", "type": "message", "role": "assistant", "content": [{"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "npm run build"}}], "stop_reason": "tool_use"}}
+{"type": "user", "timestamp": "2026-07-12T13:41:12.000Z", "message": {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "Build succeeded."}]}}

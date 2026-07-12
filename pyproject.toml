@@ -12,6 +12,9 @@ dependencies = ["pydantic>=2.0"]
 [project.optional-dependencies]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
+[project.scripts]
+control-room-attention-hook = "control_room.attention.entrypoint:main"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
