@@ -418,14 +418,14 @@ def test_acknowledging_a_folded_panes_elevated_state_stops_the_blink(tmp_path):
         proc.wait()
 
 
-def test_an_old_dead_workflow_run_stops_coloring_a_session_once_superseded(tmp_path):
+def test_an_old_dead_workflow_run_stops_coloring_a_session_once_stale(tmp_path):
     """Reported live: a session's pane read `died` from an hours-old,
     already-resolved Workflow run while a brand-new workflow the same
     session had since dispatched was actively most of the way through its
     own agents -- a session commonly dispatches many runs over its life,
     one after another, not just concurrently. A terminal run only still
-    colors its dispatcher's pane if nothing newer has been dispatched since;
-    an old, superseded one is dropped from the fold entirely."""
+    colors its dispatcher's pane within `_TERMINAL_FOLD_GRACE` of finishing;
+    an hour past that, it's dropped from the fold entirely."""
     sessions_dir = tmp_path / "sessions"
     projects_dir = tmp_path / "projects"
     proc = _spawn_sleeper()
@@ -457,7 +457,7 @@ def test_an_old_dead_workflow_run_stops_coloring_a_session_once_superseded(tmp_p
 
         assert len(snapshot.streams) == 1
         (item,) = snapshot.streams
-        assert item.event.state == AttentionState.GRINDING  # not DIED -- superseded
+        assert item.event.state == AttentionState.GRINDING  # not DIED -- stale
         assert 'data-instrument-id="workflow:wf_new"' in item.board_html
         assert 'data-instrument-id="workflow:wf_old"' not in item.board_html
         assert snapshot.wall.need_you == 0
@@ -467,12 +467,58 @@ def test_an_old_dead_workflow_run_stops_coloring_a_session_once_superseded(tmp_p
         proc.wait()
 
 
-def test_a_just_died_workflow_run_still_colors_its_session_when_nothing_is_newer(tmp_path):
-    """The supersession rule above must not blanket-suppress every terminal
-    child -- only one an actually-newer sibling has superseded. A single
-    dead run with nothing newer dispatched since is still the most recent
-    thing that happened and must still surface, exactly as the original
-    fold/elevate fix intended."""
+def test_a_died_workflow_run_stops_coloring_its_session_alone_no_sibling_needed(tmp_path):
+    """Regression for a real, confirmed-live failure mode: a Workflow run's
+    own file is written *once*, at completion -- `result`/`durationMs`
+    fields are end-of-run-only, and no file on a real machine ever carried
+    `status: "running"`, even with a workflow actively in flight in another
+    pane at the same moment. A currently-running run has *no file at all*
+    to discover, so comparing a terminal child against its siblings'
+    mtimes (an earlier version of this fix) was fundamentally unsound: a
+    run's mtime freezes at dispatch and never advances while it works, so
+    a run dispatched *before* another that later failed would always lose
+    that comparison to the failure's fresher death-mtime -- even while
+    genuinely still progressing. Reported live: a session read `died` from
+    a run finished 43+ minutes earlier while a separate, still-running
+    invocation from the same session (with no file yet to compare against)
+    was 25/26 agents through. The fix must not depend on a sibling
+    existing at all -- a single old-dead child, alone, must still go
+    stale on its own clock."""
+    sessions_dir = tmp_path / "sessions"
+    projects_dir = tmp_path / "projects"
+    proc = _spawn_sleeper()
+    try:
+        write_session_file(sessions_dir, pid=proc.pid, session_id="sess-1", cwd=str(tmp_path))
+        old_path = write_session_workflow(
+            projects_dir,
+            project_dir_name="-proj",
+            session_id="sess-1",
+            cwd=str(tmp_path),
+            run_id="wf_old",
+            status="failed",
+        )
+        forty_three_minutes_ago = time.time() - (43 * 60)
+        os.utime(old_path, (forty_three_minutes_ago, forty_three_minutes_ago))
+        state = FleetState(
+            sessions_dir, tmp_path / "jobs", tmp_path / "events", projects_dir=projects_dir
+        )
+
+        snapshot = state.poll()
+
+        assert len(snapshot.streams) == 1
+        (item,) = snapshot.streams
+        assert item.event.state == AttentionState.GRINDING  # not DIED -- stale, no sibling at all
+        assert snapshot.wall.master_caution is False
+    finally:
+        proc.kill()
+        proc.wait()
+
+
+def test_a_just_died_workflow_run_still_colors_its_session(tmp_path):
+    """The staleness rule above must not blanket-suppress every terminal
+    child -- only one old enough to have gone stale. A run that just
+    finished is still the most recent thing that happened and must still
+    surface, exactly as the original fold/elevate fix intended."""
     sessions_dir = tmp_path / "sessions"
     projects_dir = tmp_path / "projects"
     proc = _spawn_sleeper()

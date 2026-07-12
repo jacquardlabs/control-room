@@ -38,7 +38,7 @@ to be enforced.
 from __future__ import annotations
 
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
@@ -64,6 +64,40 @@ from control_room.wall import WallSummary, compute_wall_summary
 _TERMINAL_STATES = frozenset({AttentionState.DIED, AttentionState.DONE})
 """Once true, never re-derived -- see this module's docstring."""
 
+_TERMINAL_FOLD_GRACE = timedelta(minutes=10)
+"""How long a terminal (done/died) Workflow run keeps coloring its live
+dispatcher's pane after it finished.
+
+Confirmed against real `~/.claude/projects/*/*/workflows/*.json` data
+(2026-07): a run's own file is written *once*, at completion -- `result`,
+`durationMs`, `summary` are all end-of-run-only fields, and across every
+file on a real machine none ever carried `status: "running"` or an mtime
+within the last two hours, even with a Workflow tool call actively
+in-flight in another pane at the same moment. A currently-running run has
+no file at all to discover; only a *finished* one ever appears. That broke
+an earlier version of this fold that compared siblings' mtimes to decide
+which was "more recent": a run's mtime freezes at dispatch and never
+advances while it works, so a run dispatched *before* another one that
+later failed would always lose that comparison to the failure's fresher
+death-mtime, even while the earlier run was still actively progressing --
+reported live: a session read `died` from a run that had in fact finished
+43+ minutes earlier, while a separate, still-running invocation the same
+session had since dispatched was 25/26 agents through.
+
+Since "is anything else from this dispatcher still going" can't be
+answered from disk at all, elevation instead decays on its own clock: a
+run that just failed is exactly the "discovers it needed me an hour ago"
+case PRODUCT.md exists to prevent, so it still surfaces immediately; ten
+minutes later, the user has near-certainly already seen it (this story's
+own notification already fired the moment it happened, independent of
+folding) or dispatched something new, so a session already back to
+`grinding` shouldn't keep reading as `died` for the rest of the run's 24h
+discovery window. Not pinned by any acceptance criterion -- a judgment
+call in the same spirit as `discover_session_workflows`'s own `_MAX_AGE`,
+just two orders of magnitude narrower because the question it answers
+("still breaking news?") is narrower too.
+"""
+
 NotifyCallable = Callable[[str, str], None]
 
 
@@ -71,7 +105,7 @@ def _is_source_terminal(stream: StreamRecord) -> bool:
     """Whether `stream`'s own self-reported status (a job/Workflow run's
     `state`/`status` field) is terminal -- same vocabulary
     `control_room.registry`'s own liveness check reads, applied here to
-    decide fold-supersession rather than mtime-staleness. Always `False`
+    decide fold-relevance rather than mtime-staleness. Always `False`
     for a kind with no such field (e.g. an interactive session), matching
     `is_terminal_status`'s own "missing/unrecognized -> not terminal"
     default."""
@@ -211,23 +245,18 @@ class FleetState:
             if stream.parent_stream_id and stream.parent_stream_id in stream_ids:
                 children_by_parent.setdefault(stream.parent_stream_id, []).append(stream.id)
 
-        # A session commonly dispatches many Workflow runs over its life,
-        # one after another, not just concurrently -- reported live
-        # (2026-07): a session's pane read `died` from an hours-old, already-
-        # resolved run while a brand-new workflow it later dispatched was
-        # actively most of the way through its own agents. A run that's
-        # still working is always relevant; a *terminal* one only still is
-        # if nothing newer has been dispatched since (by its own file's
-        # mtime) -- an older terminal sibling is superseded and dropped from
-        # the fold entirely, so it can't keep coloring a session that has
-        # since moved on.
+        # A session commonly dispatches many Workflow runs over its life, one
+        # after another -- a terminal (done/died) one only keeps coloring
+        # its dispatcher's pane for `_TERMINAL_FOLD_GRACE` after it finished
+        # (see that constant's own docstring for why an absolute window,
+        # not a sibling-mtime comparison, is the only reliable lever here).
+        stale_cutoff = now.timestamp() - _TERMINAL_FOLD_GRACE.total_seconds()
         for parent_id, child_ids in children_by_parent.items():
-            newest_mtime = max(_source_mtime(streams_by_id[c]) for c in child_ids)
             children_by_parent[parent_id] = [
                 c
                 for c in child_ids
                 if not _is_source_terminal(streams_by_id[c])
-                or _source_mtime(streams_by_id[c]) >= newest_mtime
+                or _source_mtime(streams_by_id[c]) >= stale_cutoff
             ]
 
         # Pass 1: every stream's own, unmerged facts -- attention, board
