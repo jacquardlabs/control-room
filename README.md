@@ -13,7 +13,7 @@ Not a log multiplexer or terminal-pane manager. Not hosted, not multi-user, not 
 ## The staged path
 
 - **T0** — the studious andon board ships first (studious #98): hardens the schema-driven renderer and the attention-event taxonomy on real epics. control-room work before T0 is premature by construction.
-- **T1 — read-only control-room:** stream discovery, generic attention detection (input-blocked · question-pending · review-ready · died · grinding), board-protocol enrichment, tabs + fleet strip, notifications with an acknowledge loop.
+- **T1 — read-only control-room:** stream discovery, generic attention detection (input-blocked · question-pending · review-ready · died · grinding), board-protocol enrichment, tabs + fleet strip, notifications with an acknowledge loop, per-stream cost vitals.
 - **T2 — input-back:** resolve a parked story, answer a pending question, from the app — the human acting through a surface, with an honest action log. Read-only ends here, in writing.
 - **T3 — kick-off:** launch epics, workflows, and headless sessions from the chair. The all-in-one operator platform wrapping whatever workflow — entered only after a written vendor-landscape re-check.
 - **T4 — the desktop appliance:** a packaged desktop app (Tauri-class shell, winnow's Phase-4 packaging pattern) with Claude credentialing through the Agent SDK — the user's own subscription, a first-run auth doctor showing which credential is active and what it bills. Menubar caution light, login-item persistence, native notifications.
@@ -37,7 +37,7 @@ this step only makes detection faster for the streams that can.
 
 ## Status
 
-T1 build underway, behind the portfolio WIP cap: stream discovery, generic attention detection, and board-protocol enrichment have shipped (see `control_room/attention/` and `control_room/board/`, above); the fleet shell (server, wall, tabs, SSE -- `control_room/shell/`) is in review; notifications with an acknowledge loop and per-stream cost vitals are still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
+T1 build underway, behind the portfolio WIP cap: stream discovery, generic attention detection, board-protocol enrichment, the fleet shell (server, wall, tabs, SSE), and per-stream cost vitals have shipped (see `control_room/attention/`, `control_room/board/`, `control_room/shell/`, and `control_room/cost/`, above); notifications with an acknowledge loop is still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
 
 ## License
 

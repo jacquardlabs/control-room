@@ -103,6 +103,17 @@ def test_next_tab_index_wraps_arrow_keys_and_jumps_home_end() -> None:
     assert json.loads(_run_node(js)) == [1, 0, 2, 0, 0, 2, None]
 
 
+def test_format_burn_renders_units_against_context_or_empty_when_unresolved() -> None:
+    source = _extract_function(_html(), "formatBurn")
+    js = (
+        source
+        + """
+        console.log(JSON.stringify([formatBurn(4.2), formatBurn(0), formatBurn(null)]));
+        """
+    )
+    assert json.loads(_run_node(js)) == ["$4.20 session", "$0.00 session", ""]
+
+
 def test_classify_liveness_distinguishes_live_stalled_and_error() -> None:
     source = _extract_function(_html(), "classifyLiveness")
     js = (

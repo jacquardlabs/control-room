@@ -235,6 +235,16 @@
 
   .tab-state-text { font-size: 0.75rem; color: var(--ink-dim); }
 
+  /* Per-stream burn (cost-vitals, issue #7): vitals only, same quiet
+     ink-dim treatment as the state text beside it -- no color-coding by
+     amount, since DESIGN.md/issue #7 both name "no thresholds, no
+     warnings" as load-bearing for this story specifically. Empty (not
+     "not yet tracked") when a stream's own cost can't be resolved yet --
+     unlike the wall's aggregate slot, this is the common per-tick case for
+     a not-yet-observed stream, not a "feature doesn't exist yet" signal. */
+  .tab-burn { font-size: 0.75rem; color: var(--ink-dim); }
+  .tab-burn:empty { display: none; }
+
   /* Discovery's own liveness bookkeeping (control_room.models.LiveState) is
      a different axis from the attention taxonomy above: a stream can lose
      its process after finishing cleanly (review-ready/done/parked) with no
@@ -382,6 +392,17 @@
       return bucket === "M" ? "●" : "○";
     }
 
+    // Pure, DOM-independent: DESIGN.md's "burn always with units against
+    // context" applied to one stream's own cumulative cost -- "" (not a
+    // placeholder string) when the server hasn't resolved a number yet for
+    // this stream this tick, per `.tab-burn:empty`'s own CSS rule right
+    // above (the common per-tick case for a stream still resolving, not
+    // the "feature doesn't exist" case the wall's own "not yet tracked"
+    // text names).
+    function formatBurn(usd) {
+      return usd === null || usd === undefined ? "" : "$" + usd.toFixed(2) + " session";
+    }
+
     // The seven-state-attention-to-N/R/M-bucket mapping is owned once, server
     // side, by control_room.board.bucket.wall_bucket (epic pre-mortem #3:
     // duplicating this mapping here was a named drift risk) -- every stream
@@ -451,7 +472,8 @@
         tab.dataset.streamId = stream.id;
         tab.innerHTML = '<span class="tab-lamp" aria-hidden="true"></span>' +
           '<span class="tab-label"></span>' +
-          '<span class="tab-state-text"></span>';
+          '<span class="tab-state-text"></span>' +
+          '<span class="tab-burn"></span>';
         tab.addEventListener("click", function () { selectTab(stream.id); });
         tab.addEventListener("keydown", onTabKeydown);
         tabbar.appendChild(tab);
@@ -471,6 +493,7 @@
       tab.querySelector(".tab-lamp").textContent = lampGlyph(bucket);
       tab.querySelector(".tab-label").textContent = stream.label;
       tab.querySelector(".tab-state-text").textContent = stream.attention_state;
+      tab.querySelector(".tab-burn").textContent = formatBurn(stream.burn_usd);
 
       var panel = document.getElementById(panelId);
       // Skip the DOM write when this tick's board_html is byte-identical to

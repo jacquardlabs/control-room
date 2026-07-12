@@ -48,6 +48,7 @@ from control_room.attention.store import EventLogStore
 from control_room.board.bucket import WallBucket, wall_bucket
 from control_room.board.dispatch import resolve_board_view
 from control_room.board.render import render_board
+from control_room.cost.usage import compute_stream_cost
 from control_room.models import StreamRecord
 from control_room.registry import StreamRegistry
 from control_room.wall import WallSummary, compute_wall_summary
@@ -72,6 +73,11 @@ class StreamSnapshot(BaseModel):
     stream: StreamRecord
     event: AttentionEvent
     board_html: str
+    burn_usd: float | None = None
+    """This stream's cumulative cost so far (`cost-vitals`, issue #7) --
+    `None` when its transcript can't be resolved yet, never a fabricated
+    `0.0` (same "no file, no guess" posture as everything else this
+    snapshot carries)."""
 
 
 class FleetSnapshot(BaseModel):
@@ -104,10 +110,18 @@ class FleetState:
     disk-observable truth, is the acceptance criterion this story asks for.
     """
 
-    def __init__(self, sessions_dir: Path, jobs_dir: Path, events_dir: Path) -> None:
+    def __init__(
+        self,
+        sessions_dir: Path,
+        jobs_dir: Path,
+        events_dir: Path,
+        *,
+        projects_dir: Path | None = None,
+    ) -> None:
         self._registry = StreamRegistry(sessions_dir, jobs_dir)
         self._event_store = EventLogStore(events_dir)
         self._previous_event: dict[str, AttentionEvent] = {}
+        self._projects_dir = projects_dir
 
     def poll(self, *, now: datetime | None = None) -> FleetSnapshot:
         now = now or datetime.now(UTC)
@@ -115,14 +129,23 @@ class FleetState:
 
         snapshots = []
         events = []
+        burns: list[float] = []
         for stream in streams:
             event = self._resolve(stream, now=now)
             self._previous_event[stream.id] = event
             events.append(event)
 
             board_view = resolve_board_view(stream, event)
+            burn_usd = self._burn(stream)
+            if burn_usd is not None:
+                burns.append(burn_usd)
             snapshots.append(
-                StreamSnapshot(stream=stream, event=event, board_html=render_board(board_view))
+                StreamSnapshot(
+                    stream=stream,
+                    event=event,
+                    board_html=render_board(board_view),
+                    burn_usd=burn_usd,
+                )
             )
 
         # A stream the registry dropped this tick (aged out, not protected)
@@ -135,7 +158,7 @@ class FleetState:
 
         return FleetSnapshot(
             generated_at=now,
-            wall=compute_wall_summary(events),
+            wall=compute_wall_summary(events, aggregate_burn_usd=sum(burns) if burns else None),
             streams=tuple(snapshots),
         )
 
@@ -153,6 +176,14 @@ class FleetState:
             previous_state=previous.state if previous is not None else AttentionState.GRINDING,
             now=now,
         )
+
+    def _burn(self, stream: StreamRecord) -> float | None:
+        """This stream's cumulative cost so far, or `None` if its
+        transcript(s) can't be resolved -- `compute_stream_cost` already
+        commits to "no file, no guess"; this is just where it's plugged
+        into the poll loop. Known limitation (named in `cost.usage`'s own
+        docstring): recomputed from scratch every tick, not incremental."""
+        return compute_stream_cost(stream, projects_dir=self._projects_dir).total_usd
 
     def _is_protected(self, record: StreamRecord) -> bool:
         """Never age a stream out of the registry while it's in the wall's M
