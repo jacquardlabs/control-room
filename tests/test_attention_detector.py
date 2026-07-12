@@ -82,6 +82,87 @@ def test_no_hook_event_at_all_falls_back_to_polling_immediately(tmp_path: Path) 
     assert event.source == AttentionSource.POLL
 
 
+_FIXTURES_DIR = Path(__file__).parent / "fixtures" / "transcripts"
+
+
+def test_stale_input_blocked_hook_is_not_declassified_to_grinding_by_poll(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """Regression for the acceptance-gate finding: `input-blocked` is the
+    ONE amber state poll-fallback can never re-derive (a mid-tool-call
+    transcript tail is deliberately `grinding` -- see
+    `transcripts.classify_transcript_tail`'s adversarial case -- and a
+    permission prompt has no other on-disk signal poll can read). Once a
+    confirmed `input-blocked` hook event goes stale, unqualified
+    `STALE_AFTER` would let poll silently override it with a
+    less-informative `grinding`, dropping a still-pending needs-you moment.
+    A stale `input-blocked` hook event must keep winning until a new hook
+    event (a resume signal) supersedes it.
+    """
+    projects_dir = tmp_path / "projects"
+    cwd = tmp_path / "my-project"
+    encoded = str(cwd).replace("/", "-")
+    project_dir = projects_dir / encoded
+    project_dir.mkdir(parents=True)
+    fixture = _FIXTURES_DIR / "grinding__adversarial_mid_tool_call.jsonl"
+    (project_dir / "sess-1.jsonl").write_text(fixture.read_text(encoding="utf-8"), encoding="utf-8")
+    monkeypatch.setenv("CCTX_PROJECTS_DIR", str(projects_dir))
+
+    stream = StreamRecord(
+        id="interactive:sess-1",
+        kind=StreamKind.INTERACTIVE,
+        label="s",
+        cwd=str(cwd),
+        first_seen=NOW,
+        last_seen=NOW,
+        source_path=str(project_dir / "sess-1.jsonl"),
+    )
+
+    # Sanity check: poll alone (no hook in play) really does give grinding
+    # for this fixture -- confirming poll genuinely cannot re-derive
+    # input-blocked from this transcript, the premise the finding relies on.
+    assert poll_stream(stream, projects_dir=projects_dir).state == AttentionState.GRINDING
+
+    stale_input_blocked = AttentionEvent(
+        stream_id="interactive:sess-1",
+        state=AttentionState.INPUT_BLOCKED,
+        reason="Permission needed for command: pytest -q",
+        source=AttentionSource.HOOK,
+        at=NOW - STALE_AFTER - timedelta(seconds=1),
+    )
+
+    event = resolve_attention(
+        stream,
+        latest_hook_event=stale_input_blocked,
+        previous_state=AttentionState.INPUT_BLOCKED,
+        now=NOW,
+    )
+
+    assert event.state == AttentionState.INPUT_BLOCKED
+    assert event.source == AttentionSource.HOOK
+    assert event.reason == "Permission needed for command: pytest -q"
+
+
+def test_stale_non_input_blocked_hook_still_falls_back_to_polling(tmp_path: Path) -> None:
+    """The STALE_AFTER exemption is narrow: a stale `grinding` hook event
+    (not `input-blocked`) must still fall back to polling as before --
+    only `input-blocked` is exempt, since it's the only amber poll can't
+    re-derive."""
+    (tmp_path / "state.json").write_text(json.dumps({"state": "done"}), encoding="utf-8")
+    stream = _job_stream(tmp_path / "state.json")
+    stale_grinding = AttentionEvent(
+        stream_id="job:j1",
+        state=AttentionState.GRINDING,
+        source=AttentionSource.HOOK,
+        at=NOW - STALE_AFTER - timedelta(seconds=1),
+    )
+    event = resolve_attention(
+        stream, latest_hook_event=stale_grinding, previous_state=AttentionState.GRINDING, now=NOW
+    )
+    assert event.state == AttentionState.DONE
+    assert event.source == AttentionSource.POLL
+
+
 # --- poll_stream dispatch by kind ---
 
 

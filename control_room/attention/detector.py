@@ -37,6 +37,17 @@ interval bar, so a live hook stream is never needlessly re-polled -- but
 short enough that a hook which silently stopped firing (never registered,
 or a future Claude Code hook-delivery change) doesn't leave a stream frozen
 on a stale state forever.
+
+`input-blocked` is exempt from this timeout (see `resolve_attention`): it's
+the one amber state poll-fallback can never re-derive on its own (a
+mid-tool-call transcript tail is deliberately ambiguous -- grinding, per
+`transcripts.classify_transcript_tail` -- and a permission prompt has no
+other on-disk signal), so letting it go stale would silently declassify a
+still-pending needs-you moment to a false `grinding`, the anti-false-amber
+invariant's mirror failure. A permission prompt also legitimately persists
+indefinitely -- unlike the other amber/advisory states, there's no
+generic "this has been waiting too long, something's wrong" reading of an
+old `input-blocked` event.
 """
 
 
@@ -52,8 +63,10 @@ def resolve_attention(
     Precedence: (1) a liveness-driven `died` override always wins -- a
     stream that just lost its process mid-flight is `died` regardless of
     what a stale hook event or poll would otherwise say; (2) a fresh
-    hook-sourced event, if one exists; (3) poll-fallback, read directly
-    from the stream's own disk state.
+    hook-sourced event, if one exists -- or a confirmed `input-blocked`
+    event of any age, since poll-fallback can never re-derive it (see
+    `STALE_AFTER`'s docstring); (3) poll-fallback, read directly from the
+    stream's own disk state.
     """
     now = now or datetime.now(UTC)
 
@@ -63,7 +76,10 @@ def resolve_attention(
             stream_id=stream.id, state=died, source=AttentionSource.POLL, at=now, detail="liveness"
         )
 
-    if latest_hook_event is not None and (now - latest_hook_event.at) <= STALE_AFTER:
+    if latest_hook_event is not None and (
+        latest_hook_event.state == AttentionState.INPUT_BLOCKED
+        or (now - latest_hook_event.at) <= STALE_AFTER
+    ):
         return latest_hook_event
 
     verdict = poll_stream(stream)

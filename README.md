@@ -37,7 +37,7 @@ this step only makes detection faster for the streams that can.
 
 ## Status
 
-Design and backlog home — no code yet. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown. Build begins at T1's entry gate, behind the portfolio WIP cap.
+T1 build underway, behind the portfolio WIP cap: stream discovery and generic attention detection have shipped (see `control_room/attention/`, above); board-protocol enrichment, tabs + fleet strip, and notifications are still ahead. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown.
 
 ## License
 
