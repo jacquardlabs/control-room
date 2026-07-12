@@ -1,0 +1,603 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>control-room</title>
+<style>
+  :root {
+    --bg: #f3f4f7;
+    --panel: #ffffff;
+    --panel-border: #d6dae2;
+    --ink: #171a21;
+    --ink-dim: #565d6b;
+    --focus: #1d6fe0;
+    --grinding: #1d6fe0;
+    --grinding-ink: #0c3a80;
+    --amber: #b45309;
+    --amber-bg: #fdf1de;
+    --amber-solid: #f2a93c;
+    --on-amber: #1a1200;
+    --review: #6b7280;
+    --review-bg: #eef0f3;
+    --died: #b91c1c;
+    --died-bg: #fbe9e9;
+    --done: #15803d;
+    --done-bg: #e8f5ec;
+    --tab-bg: #e7e9ee;
+    --tab-selected: var(--panel);
+    --caution-off-bg: #e7e9ee;
+    --caution-off-ink: var(--ink-dim);
+    --live-dot: #15803d;
+    /* Deliberately not `--died`: liveness is server-connectivity, a
+       different concept from the attention taxonomy, and DESIGN.md
+       reserves red for `died` alone ("the only red") -- reusing it here
+       would let a stalled *connection* read as a died *stream*. `--ink`
+       (the page's own neutral, already near-max contrast in both themes)
+       carries "stalled" through weight/text, not a second red. */
+    --stalled-dot: var(--ink);
+    --connecting-dot: #9aa1ad;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0f15;
+      --panel: #161a23;
+      --panel-border: #2a2f3c;
+      --ink: #e7e9ef;
+      --ink-dim: #9aa1b2;
+      --focus: #5aa2ff;
+      --grinding: #5aa2ff;
+      --grinding-ink: #cfe3ff;
+      --amber: #f2a93c;
+      --amber-bg: #3a2a0e;
+      --amber-solid: #f2a93c;
+      --on-amber: #1a1200;
+      --review: #c7cbd4;
+      --review-bg: #23262f;
+      --died: #f26161;
+      --died-bg: #3a1414;
+      --done: #4ad07f;
+      --done-bg: #12301d;
+      --tab-bg: #1b1f28;
+      --tab-selected: var(--panel);
+      --caution-off-bg: #1b1f28;
+      --caution-off-ink: var(--ink-dim);
+      --live-dot: #4ad07f;
+      --stalled-dot: var(--ink);
+      --connecting-dot: #6a7180;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  body { min-height: 100vh; display: flex; flex-direction: column; }
+
+  a, button { font: inherit; color: inherit; }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* ---------- The wall ---------- */
+
+  .wall {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel);
+  }
+
+  .wall-counts {
+    display: flex;
+    gap: 1.25rem;
+    align-items: baseline;
+  }
+
+  .count { display: inline-flex; gap: 0.4em; align-items: baseline; white-space: nowrap; }
+  .count-value { font-size: 1.4rem; font-weight: 600; }
+  .count-n .count-value { color: var(--grinding-ink); }
+  .count-r .count-value { color: var(--review); }
+  .count-m .count-value { color: var(--amber); }
+
+  .master-caution {
+    appearance: none;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.5rem 0.9rem;
+    background: var(--caution-off-bg);
+    color: var(--caution-off-ink);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: default;
+  }
+
+  /* `.blink` is the one class both this wall button and every per-tab
+     board's own MASTER CAUTION button (control_room.board.render) use --
+     DESIGN.md defines no third "amber but not blinking" state for MASTER
+     CAUTION specifically (unlike a steady amber instrument): it's either
+     armed-and-blinking or off. Matching the class name lets one style rule
+     cover both surfaces, never a second, parallel button style.
+
+     The blink keyframes alternate between two fully-opaque, always-legible
+     frames (lit/amber-with-dark-legend, unlit/matches the off button
+     exactly) rather than fading through a transparent middle -- real
+     annunciator hardware works the same way, and it sidesteps any
+     light-on-light or dark-on-dark contrast dip mid-blink in either theme. */
+  .master-caution.blink {
+    background: var(--amber-solid);
+    color: var(--on-amber);
+    border-color: var(--amber-solid);
+    animation: caution-blink 1s steps(1, end) infinite;
+  }
+
+  @keyframes caution-blink {
+    0%, 49% {
+      background: var(--amber-solid);
+      color: var(--on-amber);
+      border-color: var(--amber-solid);
+    }
+    50%, 100% {
+      background: var(--caution-off-bg);
+      color: var(--caution-off-ink);
+      border-color: var(--panel-border);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .master-caution.blink {
+      animation: none;
+      background: var(--amber-solid);
+      color: var(--on-amber);
+      border-color: var(--amber-solid);
+    }
+  }
+
+  .wall-burn { color: var(--ink-dim); }
+
+  .liveness {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--ink-dim);
+  }
+
+  .liveness-dot {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 50%;
+    background: var(--connecting-dot);
+    flex: none;
+  }
+
+  .liveness[data-state="live"] .liveness-dot { background: var(--live-dot); }
+  /* Static, not pulsing: DESIGN.md reserves repeated motion for MASTER
+     CAUTION alone ("blink is reserved for unacknowledged needs-you --
+     nothing else moves repeatedly"). "Stalled" is carried by the dot's
+     fixed neutral fill, bold weight, and the literal "server not
+     responding" text below -- never a second animated signal. */
+  .liveness[data-state="stalled"] .liveness-dot { background: var(--stalled-dot); }
+  .liveness[data-state="stalled"] { color: var(--ink); font-weight: 600; }
+
+  /* ---------- Tabs ---------- */
+
+  .tabbar {
+    display: flex;
+    gap: 0.25rem;
+    overflow-x: auto;
+    padding: 0.5rem 1rem 0;
+    background: var(--bg);
+  }
+
+  .tab {
+    appearance: none;
+    border: 1px solid var(--panel-border);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    background: var(--tab-bg);
+    color: var(--ink);
+    padding: 0.45rem 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .tab[aria-selected="true"] {
+    background: var(--tab-selected);
+    font-weight: 600;
+  }
+
+  .tab-lamp { font-size: 0.75rem; }
+  .tab[data-state="grinding"] .tab-lamp { color: var(--grinding); }
+  .tab[data-state="input-blocked"] .tab-lamp,
+  .tab[data-state="question-pending"] .tab-lamp,
+  .tab[data-state="parked"] .tab-lamp { color: var(--amber); }
+  .tab[data-state="review-ready"] .tab-lamp { color: var(--review); }
+  .tab[data-state="died"] .tab-lamp { color: var(--died); }
+  .tab[data-state="done"] .tab-lamp { color: var(--done); }
+
+  .tab-state-text { font-size: 0.75rem; color: var(--ink-dim); }
+
+  /* Discovery's own liveness bookkeeping (control_room.models.LiveState) is
+     a different axis from the attention taxonomy above: a stream can lose
+     its process after finishing cleanly (review-ready/done/parked) with no
+     attention-state consequence at all, per `control_room.attention.
+     liveness`'s "losing it after review-ready/done/parked is just normal
+     cleanup." DESIGN.md still asks for it to be visible ("dead streams
+     gray then age out visibly") -- so `grace` dims the tab. Explicitly
+     excluded from `died`: DESIGN.md's own anti-pattern list names
+     "softening died" directly, and `died` streams stay at `grace` forever
+     by design (the "never disappearing while amber" protection), so
+     without this exclusion the one state DESIGN.md is most emphatic about
+     keeping undimmed would be the one state that's *always* dimmed. */
+  .tab[data-live-state="grace"]:not([data-state="died"]) { opacity: 0.6; }
+
+  /* ---------- Panels ---------- */
+
+  main {
+    flex: 1;
+    padding: 1rem;
+    border-top: 1px solid var(--panel-border);
+    background: var(--tab-selected);
+    overflow: auto;
+  }
+
+  .panel[hidden] { display: none; }
+
+  #empty-state { color: var(--ink-dim); }
+
+  /* ---------- The board fragment (control_room.board.render output) ---------- */
+
+  .board { display: flex; flex-direction: column; gap: 0.75rem; }
+  .board .cas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
+  .board .cas-M { color: var(--amber); font-weight: 600; }
+  .board .cas-N, .board .cas-none { color: var(--ink-dim); }
+  .board .cas-R { color: var(--review); }
+  .board .instruments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+  .board .instrument {
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 0.6rem 0.8rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.5rem 0.8rem;
+  }
+  .board .instrument.state-grinding { border-left: 4px solid var(--grinding); }
+  .board .instrument.state-input-blocked,
+  .board .instrument.state-question-pending,
+  .board .instrument.state-parked { border-left: 4px solid var(--amber); background: var(--amber-bg); }
+  .board .instrument.state-review-ready { border-left: 4px solid var(--review); background: var(--review-bg); }
+  .board .instrument.state-died { border-left: 4px solid var(--died); background: var(--died-bg); }
+  .board .instrument.state-done { border-left: 4px solid var(--done); background: var(--done-bg); }
+  .board .reason, .board .blocked-on, .board .resolution-command {
+    flex-basis: 100%;
+    margin: 0;
+    color: var(--ink-dim);
+  }
+  .board .resolution-command code {
+    background: var(--tab-bg);
+    padding: 0.15rem 0.4rem;
+    border-radius: 4px;
+  }
+  .board .protocol-degraded {
+    color: var(--amber);
+    font-weight: 600;
+  }
+  .board .fix-budget { display: inline-flex; gap: 0.2rem; }
+  .board .wedge { width: 0.6rem; height: 0.6rem; border-radius: 1px; display: inline-block; border: 1px solid var(--amber); }
+  .board .wedge-filled { background: var(--amber); }
+  /* This board fragment's own MASTER CAUTION renders too, deliberately not
+     suppressed here: it answers "does *this one stream* need you" (its own
+     annunciator panel), distinct from the wall's fleet-wide button above
+     ("does *anything on the fleet* need you") -- for a single-instrument
+     generic-vitals tab the two necessarily agree (by design: "tab's badge
+     always carries the same attention glyph as its strip entry"), but a
+     multi-instrument protocol board (an epic with several stories) can have
+     its own caution state independent of the rest of the fleet. */
+  .board .master-caution { margin: 0.25rem 0; }
+</style>
+</head>
+<body>
+  <header class="wall" aria-label="Fleet wall">
+    <div class="wall-counts">
+      <span class="count count-n">
+        <span class="count-value" id="count-grinding">0</span> grinding
+      </span>
+      <span class="count count-r">
+        <span class="count-value" id="count-review">0</span> review-ready
+      </span>
+      <span class="count count-m" aria-live="polite">
+        <span class="count-value" id="count-need-you">0</span> need you
+      </span>
+    </div>
+    <!-- A real, focusable button (DESIGN.md: "gauges and caution are real
+         buttons") -- deliberately without a click handler yet. Acknowledging
+         is `notifications-ack`'s story (issue #6): it owns the ack store
+         that survives a restart and the debounce/re-notify rules. Wiring a
+         click here first would mean two competing, unsynced ack mechanisms
+         once that story lands. `aria-pressed` stays "false" for the same
+         reason: nothing is ever acknowledged yet, so "false" is the honest
+         current state, not a placeholder. -->
+    <button type="button" id="master-caution" class="master-caution" aria-pressed="false" aria-label="MASTER CAUTION">
+      MASTER CAUTION <span id="caution-count">0</span>
+    </button>
+    <div class="wall-burn">burn: <span id="burn-value">not yet tracked</span></div>
+    <div class="liveness" id="liveness" data-state="connecting" role="status">
+      <span class="liveness-dot" aria-hidden="true"></span>
+      <span id="liveness-text">connecting&hellip;</span>
+    </div>
+  </header>
+
+  <nav class="tabbar" role="tablist" aria-label="Streams" id="tabbar"></nav>
+
+  <main id="panels">
+    <p id="empty-state">No streams discovered yet.</p>
+  </main>
+
+  <script>
+  (function () {
+    "use strict";
+
+    var tabbar = document.getElementById("tabbar");
+    var panels = document.getElementById("panels");
+    var emptyState = document.getElementById("empty-state");
+    var liveness = document.getElementById("liveness");
+    var livenessText = document.getElementById("liveness-text");
+    var masterCaution = document.getElementById("master-caution");
+    var cautionCount = document.getElementById("caution-count");
+
+    var selectedId = null;
+    var lastMessageAt = null;
+    var connectionErrored = false;
+    var pollIntervalSeconds = 3;
+
+    function idAttr(prefix, streamId) {
+      // Stream ids look like "interactive:abc" or "job:xyz" -- safe as an
+      // HTML id/attribute value as-is (colons are legal there); this helper
+      // exists purely to keep the prefixing consistent, not to escape
+      // anything (DOM lookups below use getElementById, never a raw CSS
+      // selector, so ":" never needs CSS escaping).
+      return prefix + "__" + streamId;
+    }
+
+    function lampGlyph(bucket) {
+      return bucket === "M" ? "●" : "○";
+    }
+
+    // The seven-state-attention-to-N/R/M-bucket mapping is owned once, server
+    // side, by control_room.board.bucket.wall_bucket (epic pre-mortem #3:
+    // duplicating this mapping here was a named drift risk) -- every stream
+    // payload already carries its resolved `bucket`, so this page never
+    // re-derives the mapping from `attention_state` itself.
+
+    function render(payload) {
+      document.getElementById("count-grinding").textContent = payload.wall.grinding;
+      document.getElementById("count-review").textContent = payload.wall.review_ready;
+      document.getElementById("count-need-you").textContent = payload.wall.need_you;
+      cautionCount.textContent = payload.wall.unacknowledged_need_you;
+      masterCaution.classList.toggle("blink", payload.wall.master_caution);
+      masterCaution.setAttribute(
+        "aria-label",
+        payload.wall.master_caution
+          ? "MASTER CAUTION -- " + payload.wall.unacknowledged_need_you + " need you"
+          : "MASTER CAUTION"
+      );
+
+      document.getElementById("burn-value").textContent =
+        payload.wall.aggregate_burn_usd === null
+          ? "not yet tracked"
+          : "$" + payload.wall.aggregate_burn_usd.toFixed(2) + " today";
+
+      pollIntervalSeconds = payload.poll_interval_seconds || pollIntervalSeconds;
+      reconcileTabs(payload.streams);
+    }
+
+    function reconcileTabs(streams) {
+      var seenIds = {};
+      streams.forEach(function (stream) {
+        seenIds[stream.id] = true;
+        upsertTab(stream);
+      });
+
+      // Remove tabs/panels for streams that vanished this tick (aged out).
+      Array.prototype.slice.call(tabbar.children).forEach(function (tab) {
+        var id = tab.dataset.streamId;
+        if (!seenIds[id]) {
+          tab.remove();
+          var panel = document.getElementById(idAttr("panel", id));
+          if (panel) panel.remove();
+        }
+      });
+
+      emptyState.hidden = streams.length > 0;
+
+      if (selectedId === null || !seenIds[selectedId]) {
+        selectedId = streams.length > 0 ? streams[0].id : null;
+      }
+      applySelection();
+    }
+
+    function upsertTab(stream) {
+      var tabId = idAttr("tab", stream.id);
+      var panelId = idAttr("panel", stream.id);
+      var tab = document.getElementById(tabId);
+      var bucket = stream.bucket;
+
+      if (!tab) {
+        tab = document.createElement("button");
+        tab.type = "button";
+        tab.id = tabId;
+        tab.className = "tab";
+        tab.setAttribute("role", "tab");
+        tab.setAttribute("aria-controls", panelId);
+        tab.dataset.streamId = stream.id;
+        tab.innerHTML = '<span class="tab-lamp" aria-hidden="true"></span>' +
+          '<span class="tab-label"></span>' +
+          '<span class="tab-state-text"></span>';
+        tab.addEventListener("click", function () { selectTab(stream.id); });
+        tab.addEventListener("keydown", onTabKeydown);
+        tabbar.appendChild(tab);
+
+        var panel = document.createElement("section");
+        panel.id = panelId;
+        panel.className = "panel";
+        panel.setAttribute("role", "tabpanel");
+        panel.setAttribute("aria-labelledby", tabId);
+        panel.setAttribute("tabindex", "0");
+        panel.hidden = true;
+        panels.appendChild(panel);
+      }
+
+      tab.dataset.state = stream.attention_state;
+      tab.dataset.liveState = stream.live_state;
+      tab.querySelector(".tab-lamp").textContent = lampGlyph(bucket);
+      tab.querySelector(".tab-label").textContent = stream.label;
+      tab.querySelector(".tab-state-text").textContent = stream.attention_state;
+
+      var panel = document.getElementById(panelId);
+      // Skip the DOM write when this tick's board_html is byte-identical to
+      // what's already rendered. A tick fires every poll interval whether
+      // or not any given stream actually changed, so an unconditional
+      // innerHTML rewrite here churned the DOM (and dropped any
+      // in-progress focus/selection/scroll position inside the panel) on
+      // every single tick, for every stream, changed or not -- including
+      // hidden panels nobody is looking at. A stream whose board_html DID
+      // change still gets fresh markup the moment this tick sees it,
+      // whether or not its tab happens to be selected right now, so
+      // switching tabs still never shows stale content.
+      if (panel._lastBoardHtml !== stream.board_html) {
+        panel._lastBoardHtml = stream.board_html;
+        panel.innerHTML = stream.board_html;
+      }
+    }
+
+    function applySelection() {
+      Array.prototype.slice.call(tabbar.children).forEach(function (tab) {
+        var isSelected = tab.dataset.streamId === selectedId;
+        tab.setAttribute("aria-selected", String(isSelected));
+        tab.tabIndex = isSelected ? 0 : -1;
+        var panel = document.getElementById(idAttr("panel", tab.dataset.streamId));
+        if (panel) panel.hidden = !isSelected;
+      });
+    }
+
+    function selectTab(streamId) {
+      selectedId = streamId;
+      applySelection();
+      var tab = document.getElementById(idAttr("tab", streamId));
+      if (tab) tab.focus();
+    }
+
+    // Pure, DOM-independent: which tab index a keyboard key moves focus to,
+    // given the currently-focused index and the tab count. `null` means
+    // "not a navigation key" -- extracted out of `onTabKeydown` (which
+    // still does exactly this, calling straight through) so it's testable
+    // without a DOM (see tests/test_shell_static_page_js.py).
+    function nextTabIndex(key, index, count) {
+      if (key === "ArrowRight") return (index + 1) % count;
+      if (key === "ArrowLeft") return (index - 1 + count) % count;
+      if (key === "Home") return 0;
+      if (key === "End") return count - 1;
+      return null;
+    }
+
+    function onTabKeydown(event) {
+      var tabs = Array.prototype.slice.call(tabbar.children);
+      var index = tabs.indexOf(event.currentTarget);
+      if (index === -1) return;
+
+      if (event.key === "Enter" || event.key === " ") {
+        selectTab(event.currentTarget.dataset.streamId);
+        event.preventDefault();
+        return;
+      }
+
+      var nextIndex = nextTabIndex(event.key, index, tabs.length);
+      if (nextIndex === null) return;
+
+      event.preventDefault();
+      selectTab(tabs[nextIndex].dataset.streamId);
+    }
+
+    // Pure, DOM-independent: given how long it's been since the last frame,
+    // the server's own tick cadence, and whether the transport itself
+    // errored, decide the liveness state/text pair -- extracted out of
+    // `updateLiveness` (which still does exactly this, calling straight
+    // through) so it's testable without a DOM (see
+    // tests/test_shell_static_page_js.py).
+    function classifyLiveness(elapsedSeconds, staleThreshold, connectionErrored) {
+      if (connectionErrored || elapsedSeconds > staleThreshold) {
+        return {
+          state: "stalled",
+          text: "server not responding — last update " + Math.round(elapsedSeconds) + "s ago",
+        };
+      }
+      return { state: "live", text: "updated " + Math.round(elapsedSeconds) + "s ago" };
+    }
+
+    function updateLiveness() {
+      if (lastMessageAt === null) {
+        liveness.dataset.state = connectionErrored ? "stalled" : "connecting";
+        livenessText.textContent = connectionErrored ? "server not responding" : "connecting…";
+        return;
+      }
+      var elapsedSeconds = (Date.now() - lastMessageAt) / 1000;
+      var staleThreshold = Math.max(pollIntervalSeconds * 3, 5);
+      var classified = classifyLiveness(elapsedSeconds, staleThreshold, connectionErrored);
+      liveness.dataset.state = classified.state;
+      livenessText.textContent = classified.text;
+    }
+
+    setInterval(updateLiveness, 1000);
+    updateLiveness();
+
+    if (typeof EventSource === "undefined") {
+      livenessText.textContent = "this browser can't stream live updates";
+      liveness.dataset.state = "stalled";
+    } else {
+      var source = new EventSource("/events");
+      source.onmessage = function (event) {
+        // A malformed or unexpected frame must not silently read as a
+        // healthy connection -- the same "uncertainty never reads as fine"
+        // instinct DESIGN.md applies to attention state applies here to
+        // liveness: catch, report through the existing stalled path, and
+        // leave `lastMessageAt` alone rather than marking a broken tick as
+        // the moment of last successful update.
+        try {
+          render(JSON.parse(event.data));
+        } catch {
+          connectionErrored = true;
+          updateLiveness();
+          return;
+        }
+        lastMessageAt = Date.now();
+        connectionErrored = false;
+        updateLiveness();
+      };
+      source.onerror = function () {
+        connectionErrored = true;
+        updateLiveness();
+      };
+    }
+  })();
+  </script>
+</body>
+</html>

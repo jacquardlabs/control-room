@@ -14,6 +14,7 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [project.scripts]
 control-room-attention-hook = "control_room.attention.entrypoint:main"
+control-room = "control_room.shell.server:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
