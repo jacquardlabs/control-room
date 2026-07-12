@@ -5,67 +5,79 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>control-room</title>
 <style>
+  /*
+    Instrument panel, two shifts of daylight.
+
+    Two type registers, one job each: PLACARD (condensed uppercase sans,
+    wide-tracked) is engraved-bezel labeling -- it never changes, it names
+    what a readout means. READOUT (monospace, tabular-nums) is the digital
+    display itself -- it's the thing that moves. Real panels keep these
+    visually distinct; so does this one.
+  */
   :root {
-    --bg: #f3f4f7;
-    --panel: #ffffff;
-    --panel-border: #d6dae2;
-    --ink: #171a21;
-    --ink-dim: #565d6b;
-    --focus: #1d6fe0;
-    --grinding: #1d6fe0;
-    --grinding-ink: #0c3a80;
-    --amber: #b45309;
-    --amber-bg: #fdf1de;
-    --amber-solid: #f2a93c;
-    --on-amber: #1a1200;
-    --review: #6b7280;
-    --review-bg: #eef0f3;
-    --died: #b91c1c;
-    --died-bg: #fbe9e9;
-    --done: #15803d;
-    --done-bg: #e8f5ec;
-    --tab-bg: #e7e9ee;
-    --tab-selected: var(--panel);
-    --caution-off-bg: #e7e9ee;
-    --caution-off-ink: var(--ink-dim);
-    --live-dot: #15803d;
-    /* Deliberately not `--died`: liveness is server-connectivity, a
-       different concept from the attention taxonomy, and DESIGN.md
-       reserves red for `died` alone ("the only red") -- reusing it here
-       would let a stalled *connection* read as a died *stream*. `--ink`
-       (the page's own neutral, already near-max contrast in both themes)
-       carries "stalled" through weight/text, not a second red. */
-    --stalled-dot: var(--ink);
-    --connecting-dot: #9aa1ad;
+    --void: #f1f2ee;
+    --bezel: #ffffff;
+    --bezel-hi: #ffffff;
+    --bezel-edge: #c9cdc4;
+    --bezel-sunk: #e6e8e2;
+    --phosphor: #14181a;
+    --steel: #5b6560;
+    --steel-hi: #ffffff;
+    --focus: #0b5fff;
+
+    --grinding: #0b5fff;
+    --grinding-ink: #0a3d9e;
+    --amber: #9c6a05;
+    --amber-lamp: #eda210;
+    --amber-bg: #fbecd2;
+    --on-amber: #241800;
+    --review: #56605a;
+    --review-bg: #eceee8;
+    --died: #b3261e;
+    --died-bg: #fbe6e4;
+    --done: #1c7a3e;
+    --done-bg: #e6f3e9;
+
+    --tab-bg: #e6e8e2;
+    --tab-selected: var(--bezel);
+    --live-dot: #1c7a3e;
+    --stalled-dot: var(--phosphor);
+    --connecting-dot: #a3a99e;
+
+    --placard: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --readout: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
   }
 
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #0c0f15;
-      --panel: #161a23;
-      --panel-border: #2a2f3c;
-      --ink: #e7e9ef;
-      --ink-dim: #9aa1b2;
+      --void: #0a0d0e;
+      --bezel: #15191a;
+      --bezel-hi: #1c2122;
+      --bezel-edge: #2a302f;
+      --bezel-sunk: #0d1112;
+      --phosphor: #e7ece7;
+      --steel: #7c8a83;
+      --steel-hi: #cfd8d1;
       --focus: #5aa2ff;
-      --grinding: #5aa2ff;
-      --grinding-ink: #cfe3ff;
-      --amber: #f2a93c;
-      --amber-bg: #3a2a0e;
-      --amber-solid: #f2a93c;
-      --on-amber: #1a1200;
-      --review: #c7cbd4;
-      --review-bg: #23262f;
-      --died: #f26161;
-      --died-bg: #3a1414;
-      --done: #4ad07f;
-      --done-bg: #12301d;
-      --tab-bg: #1b1f28;
-      --tab-selected: var(--panel);
-      --caution-off-bg: #1b1f28;
-      --caution-off-ink: var(--ink-dim);
-      --live-dot: #4ad07f;
-      --stalled-dot: var(--ink);
-      --connecting-dot: #6a7180;
+
+      --grinding: #4fb3ff;
+      --grinding-ink: #bfe3ff;
+      --amber: #ffb200;
+      --amber-lamp: #ffb200;
+      --amber-bg: #2e2205;
+      --on-amber: #201700;
+      --review: #b8c2ba;
+      --review-bg: #1c2120;
+      --died: #ff453a;
+      --died-bg: #2c1210;
+      --done: #34d399;
+      --done-bg: #0f2417;
+
+      --tab-bg: #14181a;
+      --tab-selected: var(--bezel);
+      --live-dot: #34d399;
+      --stalled-dot: var(--phosphor);
+      --connecting-dot: #4a5350;
     }
   }
 
@@ -74,9 +86,9 @@
   html, body {
     margin: 0;
     padding: 0;
-    background: var(--bg);
-    color: var(--ink);
-    font-family: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    background: var(--void);
+    color: var(--phosphor);
+    font-family: var(--readout);
     font-variant-numeric: tabular-nums;
   }
 
@@ -90,96 +102,157 @@
     border-radius: 2px;
   }
 
-  /* ---------- The wall ---------- */
+  .placard {
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-weight: 600;
+    font-size: 0.62rem;
+    color: var(--steel);
+  }
+
+  /* ---------- The wall: one instrument strip, bezel-divided cells ---------- */
 
   .wall {
     display: flex;
-    align-items: center;
-    gap: 1.5rem;
+    align-items: stretch;
     flex-wrap: wrap;
-    padding: 0.75rem 1rem;
-    border-bottom: 1px solid var(--panel-border);
-    background: var(--panel);
+    background: var(--bezel);
+    border-bottom: 1px solid var(--bezel-edge);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
   }
 
-  .wall-counts {
+  .plate {
     display: flex;
-    gap: 1.25rem;
-    align-items: baseline;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 1.1rem;
+    border-right: 1px solid var(--bezel-edge);
+    background: var(--bezel-sunk);
+  }
+  .plate-mark {
+    font-size: 1rem;
+    color: var(--grinding);
+    line-height: 1;
+  }
+  .plate-name {
+    font-family: var(--placard);
+    font-weight: 700;
+    letter-spacing: 0.16em;
+    font-size: 0.72rem;
+    white-space: nowrap;
   }
 
-  .count { display: inline-flex; gap: 0.4em; align-items: baseline; white-space: nowrap; }
-  .count-value { font-size: 1.4rem; font-weight: 600; }
+  .wall-cell {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.2rem;
+    padding: 0.55rem 1.15rem;
+    border-right: 1px solid var(--bezel-edge);
+    min-width: 0;
+  }
+
+  .count { display: inline-flex; align-items: baseline; }
+  .count-value { font-size: 1.5rem; font-weight: 600; line-height: 1; }
   .count-n .count-value { color: var(--grinding-ink); }
   .count-r .count-value { color: var(--review); }
   .count-m .count-value { color: var(--amber); }
 
+  /* Grows to absorb whatever width the fixed-size cells before it don't
+     use, so the strip's own border-right divisions reach the liveness
+     indicator cleanly on a wide monitor instead of leaving a floating gap
+     of bare bezel between the last populated cell and the pinned-right
+     liveness readout. */
+  .cell-burn { min-width: 8.5rem; flex: 1 1 auto; }
+  .wall-burn { font-size: 1.05rem; font-weight: 600; white-space: nowrap; }
+
+  /* MASTER CAUTION -- the one signature, the one thing DESIGN.md lets move.
+     A real annunciator: a lamp lens plus a placard face, off (dim steel) or
+     lit (amber field with an actual radial glow), never a flat status pill. */
   .master-caution {
     appearance: none;
-    border: 1px solid var(--panel-border);
-    border-radius: 6px;
-    padding: 0.5rem 0.9rem;
-    background: var(--caution-off-bg);
-    color: var(--caution-off-ink);
-    font-weight: 700;
-    letter-spacing: 0.04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin: 0.5rem 0.9rem;
+    padding: 0.4rem 1rem 0.4rem 0.7rem;
+    border: 1px solid var(--bezel-edge);
+    border-radius: 4px;
+    background: linear-gradient(180deg, var(--bezel-hi), var(--bezel));
+    color: var(--steel);
     cursor: pointer;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), 0 1px 1px rgba(0, 0, 0, 0.15);
   }
 
-  /* `.blink` is the one class both this wall button and every per-tab
-     board's own MASTER CAUTION button (control_room.board.render) use --
-     DESIGN.md defines no third "amber but not blinking" state for MASTER
-     CAUTION specifically (unlike a steady amber instrument): it's either
-     armed-and-blinking or off. Matching the class name lets one style rule
-     cover both surfaces, never a second, parallel button style.
+  .mc-lamp {
+    width: 0.9rem;
+    height: 0.9rem;
+    border-radius: 50%;
+    flex: none;
+    background: radial-gradient(circle at 32% 28%, var(--steel-hi), var(--bezel-edge) 75%);
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+  }
 
-     The blink keyframes alternate between two fully-opaque, always-legible
-     frames (lit/amber-with-dark-legend, unlit/matches the off button
-     exactly) rather than fading through a transparent middle -- real
-     annunciator hardware works the same way, and it sidesteps any
-     light-on-light or dark-on-dark contrast dip mid-blink in either theme. */
+  .mc-label {
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-weight: 700;
+    font-size: 0.78rem;
+  }
+
+  .mc-count {
+    font-family: var(--readout);
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+
+  /* Two fully-opaque frames, never a fade through transparency -- real
+     annunciator hardware switches, it doesn't dissolve; that also sidesteps
+     any light-on-light/dark-on-dark contrast dip mid-blink in either theme. */
   .master-caution.blink {
-    background: var(--amber-solid);
-    color: var(--on-amber);
-    border-color: var(--amber-solid);
+    border-color: var(--amber-lamp);
     animation: caution-blink 1s steps(1, end) infinite;
+  }
+  .master-caution.blink .mc-lamp {
+    background: radial-gradient(circle at 32% 28%, #fff3d6, var(--amber-lamp) 60%, #7a4b00 100%);
+    box-shadow: 0 0 8px 2px rgba(237, 162, 16, 0.65), inset 0 0 0 1px rgba(0, 0, 0, 0.3);
   }
 
   @keyframes caution-blink {
     0%, 49% {
-      background: var(--amber-solid);
+      background: linear-gradient(180deg, var(--amber-lamp), var(--amber));
       color: var(--on-amber);
-      border-color: var(--amber-solid);
     }
     50%, 100% {
-      background: var(--caution-off-bg);
-      color: var(--caution-off-ink);
-      border-color: var(--panel-border);
+      background: linear-gradient(180deg, var(--bezel-hi), var(--bezel));
+      color: var(--steel);
     }
   }
 
   @media (prefers-reduced-motion: reduce) {
     .master-caution.blink {
       animation: none;
-      background: var(--amber-solid);
+      background: linear-gradient(180deg, var(--amber-lamp), var(--amber));
       color: var(--on-amber);
-      border-color: var(--amber-solid);
     }
   }
-
-  .wall-burn { color: var(--ink-dim); }
 
   .liveness {
     margin-left: auto;
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    color: var(--ink-dim);
+    padding: 0 1.1rem;
+    color: var(--steel);
+    font-size: 0.78rem;
+    border-left: 1px solid var(--bezel-edge);
   }
 
   .liveness-dot {
-    width: 0.6rem;
-    height: 0.6rem;
+    width: 0.55rem;
+    height: 0.55rem;
     border-radius: 50%;
     background: var(--connecting-dot);
     flex: none;
@@ -187,44 +260,47 @@
 
   .liveness[data-state="live"] .liveness-dot { background: var(--live-dot); }
   /* Static, not pulsing: DESIGN.md reserves repeated motion for MASTER
-     CAUTION alone ("blink is reserved for unacknowledged needs-you --
-     nothing else moves repeatedly"). "Stalled" is carried by the dot's
-     fixed neutral fill, bold weight, and the literal "server not
-     responding" text below -- never a second animated signal. */
+     CAUTION alone. "Stalled" is carried by the dot's fixed neutral fill,
+     bold weight, and the literal text below -- never a second animated
+     signal competing with the one the whole product reserves motion for. */
   .liveness[data-state="stalled"] .liveness-dot { background: var(--stalled-dot); }
-  .liveness[data-state="stalled"] { color: var(--ink); font-weight: 600; }
+  .liveness[data-state="stalled"] { color: var(--phosphor); font-weight: 600; }
 
-  /* ---------- Tabs ---------- */
+  /* ---------- Tabs: labeled channel selectors, not browser tabs ---------- */
 
   .tabbar {
     display: flex;
-    gap: 0.25rem;
+    gap: 2px;
     overflow-x: auto;
-    padding: 0.5rem 1rem 0;
-    background: var(--bg);
+    padding: 0.6rem 0.8rem 0;
+    background: var(--void);
   }
 
   .tab {
     appearance: none;
-    border: 1px solid var(--panel-border);
+    border: 1px solid var(--bezel-edge);
     border-bottom: none;
-    border-radius: 6px 6px 0 0;
+    border-radius: 3px 3px 0 0;
     background: var(--tab-bg);
-    color: var(--ink);
-    padding: 0.45rem 0.8rem;
+    color: var(--phosphor);
+    padding: 0.5rem 0.85rem;
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
+    gap: 0.55rem;
     cursor: pointer;
     white-space: nowrap;
   }
 
   .tab[aria-selected="true"] {
     background: var(--tab-selected);
-    font-weight: 600;
+    box-shadow: inset 0 2px 0 var(--grinding);
   }
 
-  .tab-lamp { font-size: 0.75rem; }
+  .tab-lamp {
+    font-size: 0.7rem;
+    width: 1em;
+    text-align: center;
+  }
   .tab[data-state="grinding"] .tab-lamp { color: var(--grinding); }
   .tab[data-state="input-blocked"] .tab-lamp,
   .tab[data-state="question-pending"] .tab-lamp,
@@ -233,125 +309,169 @@
   .tab[data-state="died"] .tab-lamp { color: var(--died); }
   .tab[data-state="done"] .tab-lamp { color: var(--done); }
 
-  .tab-state-text { font-size: 0.75rem; color: var(--ink-dim); }
+  .tab-label { font-weight: 600; }
 
-  /* Per-stream burn (cost-vitals, issue #7): vitals only, same quiet
-     ink-dim treatment as the state text beside it -- no color-coding by
-     amount, since DESIGN.md/issue #7 both name "no thresholds, no
-     warnings" as load-bearing for this story specifically. Empty (not
-     "not yet tracked") when a stream's own cost can't be resolved yet --
-     unlike the wall's aggregate slot, this is the common per-tick case for
-     a not-yet-observed stream, not a "feature doesn't exist yet" signal. */
-  .tab-burn { font-size: 0.75rem; color: var(--ink-dim); }
+  .tab-state-text {
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.62rem;
+    color: var(--steel);
+  }
+
+  .tab-burn { font-size: 0.72rem; color: var(--steel); }
   .tab-burn:empty { display: none; }
 
-  /* Discovery's own liveness bookkeeping (control_room.models.LiveState) is
-     a different axis from the attention taxonomy above: a stream can lose
-     its process after finishing cleanly (review-ready/done/parked) with no
-     attention-state consequence at all, per `control_room.attention.
-     liveness`'s "losing it after review-ready/done/parked is just normal
-     cleanup." DESIGN.md still asks for it to be visible ("dead streams
-     gray then age out visibly") -- so `grace` dims the tab. Explicitly
-     excluded from `died`: DESIGN.md's own anti-pattern list names
-     "softening died" directly, and `died` streams stay at `grace` forever
-     by design (the "never disappearing while amber" protection), so
-     without this exclusion the one state DESIGN.md is most emphatic about
-     keeping undimmed would be the one state that's *always* dimmed. */
-  .tab[data-live-state="grace"]:not([data-state="died"]) { opacity: 0.6; }
+  /* Discovery's own liveness bookkeeping is a different axis from the
+     attention taxonomy above -- see control_room.attention.liveness.
+     `died` is excluded from dimming: DESIGN.md's anti-pattern list names
+     "softening died" directly, and it stays at `grace` forever by design
+     (the "never disappearing while amber" protection), so without this
+     exclusion the one state DESIGN.md is most emphatic about keeping
+     undimmed would be the one state that's always dimmed. */
+  .tab[data-live-state="grace"]:not([data-state="died"]) { opacity: 0.55; }
 
   /* ---------- Panels ---------- */
 
   main {
     flex: 1;
-    padding: 1rem;
-    border-top: 1px solid var(--panel-border);
+    padding: 1.1rem;
+    border-top: 1px solid var(--bezel-edge);
     background: var(--tab-selected);
     overflow: auto;
   }
 
   .panel[hidden] { display: none; }
 
-  #empty-state { color: var(--ink-dim); }
+  #empty-state {
+    color: var(--steel);
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.75rem;
+  }
 
-  /* ---------- The board fragment (control_room.board.render output) ---------- */
+  /* ---------- The board fragment (control_room.board.render output) ----------
+     Server-rendered; this page only supplies the panel-mounted styling. */
 
-  .board { display: flex; flex-direction: column; gap: 0.75rem; }
-  .board .cas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; }
-  .board .cas-M { color: var(--amber); font-weight: 600; }
-  .board .cas-N, .board .cas-none { color: var(--ink-dim); }
-  .board .cas-R { color: var(--review); }
+  .board { display: flex; flex-direction: column; gap: 0.85rem; }
+
+  .board .cas {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.82rem;
+  }
+  .board .cas-line {
+    padding: 0.35rem 0.6rem;
+    border-left: 3px solid transparent;
+  }
+  .board .cas-M { color: var(--amber); font-weight: 600; background: var(--amber-bg); border-left-color: var(--amber); }
+  .board .cas-N, .board .cas-none { color: var(--steel); }
+  .board .cas-R { color: var(--review); background: var(--review-bg); border-left-color: var(--review); }
+
   .board .instruments { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
   .board .instrument {
-    border: 1px solid var(--panel-border);
-    border-radius: 6px;
-    padding: 0.6rem 0.8rem;
+    border: 1px solid var(--bezel-edge);
+    border-radius: 3px;
+    padding: 0.6rem 0.85rem;
     display: flex;
     flex-wrap: wrap;
     align-items: baseline;
-    gap: 0.5rem 0.8rem;
+    gap: 0.5rem 0.9rem;
+    background: var(--bezel);
   }
-  .board .instrument.state-grinding { border-left: 4px solid var(--grinding); }
+  .board .instrument.state-grinding { border-left: 3px solid var(--grinding); }
   .board .instrument.state-input-blocked,
   .board .instrument.state-question-pending,
-  .board .instrument.state-parked { border-left: 4px solid var(--amber); background: var(--amber-bg); }
-  .board .instrument.state-review-ready { border-left: 4px solid var(--review); background: var(--review-bg); }
-  .board .instrument.state-died { border-left: 4px solid var(--died); background: var(--died-bg); }
-  .board .instrument.state-done { border-left: 4px solid var(--done); background: var(--done-bg); }
+  .board .instrument.state-parked { border-left: 3px solid var(--amber); background: var(--amber-bg); }
+  .board .instrument.state-review-ready { border-left: 3px solid var(--review); background: var(--review-bg); }
+  .board .instrument.state-died { border-left: 3px solid var(--died); background: var(--died-bg); }
+  .board .instrument.state-done { border-left: 3px solid var(--done); background: var(--done-bg); }
+
+  .board .lamp { font-size: 0.85rem; }
+  .board .lamp-fix {
+    font-family: var(--placard);
+    font-size: 0.6rem;
+    letter-spacing: 0.06em;
+    color: var(--steel);
+  }
+  .board .label { font-weight: 600; }
+  .board .state-text {
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.65rem;
+    color: var(--steel);
+  }
+
   .board .reason, .board .blocked-on, .board .resolution-command {
     flex-basis: 100%;
     margin: 0;
-    color: var(--ink-dim);
+    color: var(--steel);
+    font-size: 0.85rem;
   }
   .board .resolution-command code {
-    background: var(--tab-bg);
+    background: var(--bezel-sunk);
     padding: 0.15rem 0.4rem;
-    border-radius: 4px;
+    border-radius: 2px;
   }
   .board .protocol-degraded {
     color: var(--amber);
     font-weight: 600;
   }
   .board .fix-budget { display: inline-flex; gap: 0.2rem; }
-  .board .wedge { width: 0.6rem; height: 0.6rem; border-radius: 1px; display: inline-block; border: 1px solid var(--amber); }
-  .board .wedge-filled { background: var(--amber); }
+  .board .wedge { width: 0.6rem; height: 0.6rem; border-radius: 1px; display: inline-block; border: 1px solid var(--amber-lamp); }
+  .board .wedge-filled { background: var(--amber-lamp); }
+
   /* This board fragment's own MASTER CAUTION renders too, deliberately not
-     suppressed here: it answers "does *this one stream* need you" (its own
-     annunciator panel), distinct from the wall's fleet-wide button above
-     ("does *anything on the fleet* need you") -- for a single-instrument
-     generic-vitals tab the two necessarily agree (by design: "tab's badge
-     always carries the same attention glyph as its strip entry"), but a
-     multi-instrument protocol board (an epic with several stories) can have
-     its own caution state independent of the rest of the fleet. */
-  .board .master-caution { margin: 0.25rem 0; cursor: pointer; }
+     suppressed: it answers "does *this one stream* need you," distinct
+     from the wall's fleet-wide button -- a multi-instrument protocol board
+     can have its own caution state independent of the rest of the fleet.
+     Scaled down from the wall's own version, same lamp language. */
+  .board .master-caution { margin: 0.1rem 0; padding: 0.35rem 0.8rem 0.35rem 0.6rem; }
 </style>
 </head>
 <body>
   <header class="wall" aria-label="Fleet wall">
-    <div class="wall-counts">
-      <span class="count count-n">
-        <span class="count-value" id="count-grinding">0</span> grinding
-      </span>
-      <span class="count count-r">
-        <span class="count-value" id="count-review">0</span> review-ready
-      </span>
-      <span class="count count-m" aria-live="polite">
-        <span class="count-value" id="count-need-you">0</span> need you
-      </span>
+    <div class="plate">
+      <span class="plate-mark" aria-hidden="true">&#9679;</span>
+      <span class="plate-name">Control Room</span>
     </div>
+
+    <div class="wall-cell">
+      <span class="placard">Grinding</span>
+      <span class="count count-n"><span class="count-value" id="count-grinding">0</span></span>
+    </div>
+    <div class="wall-cell">
+      <span class="placard">Review-ready</span>
+      <span class="count count-r"><span class="count-value" id="count-review">0</span></span>
+    </div>
+    <div class="wall-cell">
+      <span class="placard">Need you</span>
+      <span class="count count-m" aria-live="polite"><span class="count-value" id="count-need-you">0</span></span>
+    </div>
+
     <!-- A real, focusable button (DESIGN.md: "gauges and caution are real
          buttons"). Acknowledges every currently-need-you stream at once
-         (POST /ack with no body -- see notifications-ack's server route);
-         a single tab's own board carries the matching per-tab affordance
-         (`control_room.board.render`'s own "master-caution" button, wired
-         below via event delegation on #panels). Never mutates the DOM
-         itself on click: the next SSE frame (within one poll interval, the
-         same bar this story's acceptance criteria name) is what actually
-         reflects the ack -- server truth only, never client-invented state
-         (`control_room.shell.payload`'s own docstring). -->
+         (POST /ack with no body); a single tab's own board carries the
+         matching per-tab affordance. Never mutates the DOM itself on
+         click: the next SSE frame is what actually reflects the ack --
+         server truth only, never client-invented state. -->
     <button type="button" id="master-caution" class="master-caution" aria-pressed="false" aria-label="MASTER CAUTION">
-      MASTER CAUTION <span id="caution-count">0</span>
+      <span class="mc-lamp" aria-hidden="true"></span>
+      <span class="mc-label">Master Caution</span>
+      <span class="mc-count" id="caution-count">0</span>
     </button>
-    <div class="wall-burn">burn: <span id="burn-value">not yet tracked</span></div>
+
+    <div class="wall-cell cell-burn">
+      <span class="placard">Burn today</span>
+      <span class="wall-burn" id="burn-value">not yet tracked</span>
+    </div>
+
     <div class="liveness" id="liveness" data-state="connecting" role="status">
       <span class="liveness-dot" aria-hidden="true"></span>
       <span id="liveness-text">connecting&hellip;</span>
