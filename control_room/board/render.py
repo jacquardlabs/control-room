@@ -34,7 +34,13 @@ from __future__ import annotations
 from html import escape
 
 from control_room.board.bucket import WallBucket, wall_bucket
-from control_room.board.models import BoardView, CasMessage, FixBudget, Instrument
+from control_room.board.models import (
+    BoardView,
+    CasMessage,
+    FixBudget,
+    Instrument,
+    VerdictTrailEntry,
+)
 
 _REDUCED_MOTION_STYLE = (
     "<style>@media (prefers-reduced-motion: reduce) {"
@@ -116,8 +122,34 @@ def _render_instrument(instrument: Instrument) -> str:
     if instrument.resolution_command:
         command = escape(instrument.resolution_command)
         parts.append(f'<p class="resolution-command"><code>{command}</code></p>')
+    if instrument.verdict_trail:
+        parts.append(_render_verdict_trail(instrument.verdict_trail))
     parts.append("</li>")
     return "".join(parts)
+
+
+def _render_verdict_trail(trail: tuple[VerdictTrailEntry, ...]) -> str:
+    """DESIGN.md's drawer, verbatim: "opened on demand, never ambient." A
+    native `<details>`/`<summary>` disclosure -- collapsed by default,
+    keyboard-operable, no JS required to open/close it."""
+    rows = "".join(_render_verdict_trail_row(entry) for entry in trail)
+    return (
+        '<details class="verdict-trail">'
+        "<summary>Verdict trail</summary>"
+        f'<ol class="verdict-trail-rows">{rows}</ol>'
+        "</details>"
+    )
+
+
+def _render_verdict_trail_row(entry: VerdictTrailEntry) -> str:
+    sha = f'<span class="vt-sha">{escape(entry.sha)}</span>' if entry.sha else ""
+    return (
+        "<li>"
+        f'<span class="vt-step">{escape(entry.step)}</span>'
+        f'<span class="vt-outcome">{escape(entry.outcome)}</span>'
+        f"{sha}"
+        "</li>"
+    )
 
 
 def _render_fix_budget(budget: FixBudget) -> str:

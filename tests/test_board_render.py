@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from control_room.attention.models import AttentionState
-from control_room.board.models import BoardSource, BoardView, FixBudget, Instrument
+from control_room.board.models import (
+    BoardSource,
+    BoardView,
+    FixBudget,
+    Instrument,
+    VerdictTrailEntry,
+)
 from control_room.board.render import render_board
 
 _RESOLUTION_COMMAND = 'gate-ledger epic-story-set --epic "t1" --slug "board-protocol-render"'
@@ -166,3 +172,56 @@ def test_generic_instrument_renders_without_fix_budget_or_blocked_on() -> None:
     html = render_board(_generic_view())
     assert "fix-budget" not in html
     assert "blocked-on" not in html
+
+
+# ---------------------------------------------------------------------------
+# The verdict-trail drawer -- DESIGN.md verbatim: "opened on demand, never
+# ambient." A native <details>/<summary> disclosure, collapsed by default.
+# ---------------------------------------------------------------------------
+
+
+def test_verdict_trail_renders_as_a_collapsed_details_disclosure() -> None:
+    view = _protocol_view(
+        instruments=(
+            Instrument(
+                id="a",
+                label="A",
+                state=AttentionState.DONE,
+                verdict_trail=(
+                    VerdictTrailEntry(step="build", outcome="DONE", sha="abc123"),
+                    VerdictTrailEntry(step="audit", outcome="PASS", sha="def456"),
+                ),
+            ),
+        )
+    )
+    html = render_board(view)
+    assert "<details" in html
+    assert "<summary>Verdict trail</summary>" in html
+    assert "abc123" in html
+    assert "def456" in html
+    assert html.index("DONE") < html.index("PASS")  # oldest first, never re-sorted
+
+
+def test_no_verdict_trail_means_no_drawer_at_all() -> None:
+    """Never an empty, ambient drawer -- absent entirely when there's
+    nothing to show, matching every other optional instrument field here
+    (fix-budget, blocked-on, resolution-command)."""
+    html = render_board(_generic_view())
+    assert "verdict-trail" not in html
+    assert "<details" not in html
+
+
+def test_verdict_trail_html_is_escaped() -> None:
+    view = _protocol_view(
+        instruments=(
+            Instrument(
+                id="a",
+                label="A",
+                state=AttentionState.DONE,
+                verdict_trail=(VerdictTrailEntry(step="<script>", outcome="DONE"),),
+            ),
+        )
+    )
+    html = render_board(view)
+    assert "<script>" not in html.split("<details", 1)[1]
+    assert "&lt;script&gt;" in html

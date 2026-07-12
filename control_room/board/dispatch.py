@@ -90,7 +90,7 @@ def resolve_board_view(
         return _degrade(stream, event, exc)
 
     try:
-        return build_protocol_board(epic, stream_id=stream.id)
+        return build_protocol_board(epic, stream_id=stream.id, studious_root=root)
     except ValueError as exc:
         return _degrade(stream, event, exc)
 

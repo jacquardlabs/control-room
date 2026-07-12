@@ -58,6 +58,18 @@ class FixBudget(BaseModel):
         return self.used > self.cap
 
 
+class VerdictTrailEntry(BaseModel):
+    """One round of an instrument's own build/audit/fix/retry history --
+    DESIGN.md's "verdict trail," read via
+    `control_room.board.ledger.load_work_history` and rendered inside an
+    on-demand drawer, never ambient (DESIGN.md: "opened on demand")."""
+
+    step: str
+    outcome: str
+    sha: str | None = None
+    at: str | None = None
+
+
 class Instrument(BaseModel):
     """One row on the board -- one story (protocol) or one stream (generic).
 
@@ -84,6 +96,12 @@ class Instrument(BaseModel):
     step 3), e.g. the `gate-ledger epic-story-set ... --status pending`
     un-park incantation `work-through.md` documents. `None` when there is
     nothing actionable to hand the drawer."""
+    verdict_trail: tuple[VerdictTrailEntry, ...] = ()
+    """This instrument's own build/audit/fix/retry history, oldest first --
+    the drawer's other piece of content alongside `resolution_command`.
+    Empty for a generic-adapter instrument (there is no gate-ledger
+    work-log without the protocol) and for a protocol instrument with
+    nothing recorded yet (e.g. a story still `pending`, never dispatched)."""
 
     @property
     def fix_lamp_on(self) -> bool:

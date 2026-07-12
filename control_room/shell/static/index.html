@@ -450,6 +450,45 @@
   .board .wedge { width: 0.6rem; height: 0.6rem; border-radius: 1px; display: inline-block; border: 1px solid var(--amber-lamp); }
   .board .wedge-filled { background: var(--amber-lamp); }
 
+  /* The drawer, DESIGN.md verbatim: "opened on demand, never ambient."
+     A native <details>/<summary> disclosure -- collapsed by default, no
+     JS needed to open it, keyboard-operable for free. */
+  .board .verdict-trail {
+    flex-basis: 100%;
+    margin-top: 0.2rem;
+  }
+  .board .verdict-trail summary {
+    cursor: pointer;
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 0.62rem;
+    color: var(--steel);
+  }
+  .board .verdict-trail summary:hover { color: var(--phosphor); }
+  .board .verdict-trail-rows {
+    list-style: none;
+    margin: 0.4rem 0 0;
+    padding: 0.5rem 0.7rem;
+    background: var(--bezel-sunk);
+    border-radius: 2px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+  }
+  .board .verdict-trail-rows li { display: flex; gap: 0.6rem; align-items: baseline; }
+  .board .vt-step {
+    font-family: var(--placard);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.62rem;
+    color: var(--steel);
+    min-width: 5.5rem;
+  }
+  .board .vt-outcome { font-weight: 600; flex: 1 1 auto; }
+  .board .vt-sha { color: var(--steel); font-size: 0.75rem; }
+
   /* This board fragment's own MASTER CAUTION renders too, deliberately not
      suppressed: it answers "does *this one stream* need you," distinct
      from the wall's fleet-wide button -- a multi-instrument protocol board

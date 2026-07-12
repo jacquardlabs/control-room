@@ -176,3 +176,34 @@ def test_default_studious_root_derives_from_project_root(tmp_path: Path) -> None
     stream = _stream(project_root=str(project_root))
     view = resolve_board_view(stream, _event(stream))
     assert view.source is BoardSource.PROTOCOL
+
+
+def test_studious_root_threads_through_to_populate_verdict_trail(tmp_path: Path) -> None:
+    """The one production wiring point: `resolve_board_view` already has
+    `studious_root` in scope to load the epic ledger -- it must pass the
+    same root through to `build_protocol_board` so a story's own verdict
+    trail (gate-ledger's `work-log` history) reaches the board too."""
+    _write_epic(
+        tmp_path,
+        "t1",
+        {
+            "schemaVersion": SUPPORTED_SCHEMA_VERSION,
+            "slug": "t1",
+            "stories": {"board-protocol-render": {"status": "landed", "title": "BPR"}},
+        },
+    )
+    work_dir = tmp_path / "work"
+    work_dir.mkdir(parents=True)
+    (work_dir / "t1-board-protocol-render.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "slug": "t1-board-protocol-render",
+                "history": [{"step": "build", "outcome": "DONE", "sha": "abc123"}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    stream = _stream()
+    view = resolve_board_view(stream, _event(stream), studious_root=tmp_path)
+    assert view.instruments[0].verdict_trail[0].outcome == "DONE"

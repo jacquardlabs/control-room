@@ -21,6 +21,7 @@ Claude Code's own on-disk state).
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from pydantic import BaseModel, ValidationError
@@ -112,3 +113,63 @@ def load_epic_ledger(studious_root: Path, epic_slug: str) -> EpicLedger:
         )
     except ValidationError as exc:
         raise ValueError(f"epic ledger at {path} failed validation: {exc}") from exc
+
+
+class WorkHistoryEntry(BaseModel):
+    """One `gate-ledger work-log` entry -- gate-ledger's own shape, read
+    verbatim. DESIGN.md's "verdict trail": a story's own build/audit/fix/
+    retry history, one round per entry."""
+
+    step: str
+    outcome: str
+    sha: str | None = None
+    at: str | None = None
+
+
+def _slugify(value: str) -> str:
+    """Python port of `bin/gate-ledger`'s own `slugify()`: lowercase, runs
+    of anything outside `[a-z0-9]` collapse to one `-`, edges trimmed. Must
+    match exactly -- `work_file_path` uses this to name the same on-disk
+    file gate-ledger itself writes, and gate-ledger's own `slugify` collapses
+    the epic-qualified slug's own "--" separator to a single "-" (e.g.
+    `t1--fleet-shell` -> `t1-fleet-shell`) just like any other run of
+    non-alphanumeric characters."""
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def work_file_path(studious_root: Path, epic_slug: str, story_slug: str) -> Path:
+    """Mirrors `bin/gate-ledger`'s own `work_dir`-then-`<slug>.json` layout
+    for a story's work file, keyed by the *slugified* epic-qualified slug
+    (`_slugify`'s own docstring explains the `--` collapse)."""
+    return studious_root / "work" / f"{_slugify(f'{epic_slug}--{story_slug}')}.json"
+
+
+def load_work_history(
+    studious_root: Path, epic_slug: str, story_slug: str
+) -> tuple[WorkHistoryEntry, ...]:
+    """One story's own build/audit/fix/retry trail -- gate-ledger's own
+    `work-log` history, the content DESIGN.md's "verdict trail" drawer
+    shows. `()` for anything not cleanly readable (no work file yet, e.g. a
+    story that hasn't started, malformed JSON, an unexpected shape) -- a
+    trail is enrichment, never load-bearing the way the epic ledger's own
+    schema-version check is; a story with nothing to show is the ordinary
+    case, not a fault worth degrading the whole board over.
+    """
+    path = work_file_path(studious_root, epic_slug, story_slug)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(raw, dict):
+        return ()
+    history = raw.get("history")
+    if not isinstance(history, list):
+        return ()
+
+    entries = []
+    for item in history:
+        try:
+            entries.append(WorkHistoryEntry.model_validate(item))
+        except ValidationError:
+            continue  # one malformed round is skipped, not fatal to the rest
+    return tuple(entries)

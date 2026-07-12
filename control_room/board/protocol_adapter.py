@@ -20,10 +20,19 @@ story worktree.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from control_room.attention.models import AMBER_STATES, AttentionState
 from control_room.board.bucket import WallBucket, wall_bucket
-from control_room.board.ledger import EpicLedger, StoryLedger
-from control_room.board.models import BoardSource, BoardView, CasMessage, FixBudget, Instrument
+from control_room.board.ledger import EpicLedger, StoryLedger, WorkHistoryEntry, load_work_history
+from control_room.board.models import (
+    BoardSource,
+    BoardView,
+    CasMessage,
+    FixBudget,
+    Instrument,
+    VerdictTrailEntry,
+)
 
 _STATUS_TO_STATE: dict[str, AttentionState] = {
     "landed": AttentionState.DONE,
@@ -82,11 +91,28 @@ def _resolution_command(epic_slug: str, story_slug: str, story: StoryLedger) -> 
     )
 
 
+def _verdict_trail(entry: WorkHistoryEntry) -> VerdictTrailEntry:
+    """gate-ledger's own read-verbatim shape -> the board's own vocabulary --
+    the same one-field-at-a-time mapping every other ledger field here
+    already gets, never passing gate-ledger's own model straight through."""
+    return VerdictTrailEntry(step=entry.step, outcome=entry.outcome, sha=entry.sha, at=entry.at)
+
+
 def _instrument(
-    epic_slug: str, story_slug: str, story: StoryLedger, epic: EpicLedger
+    epic_slug: str,
+    story_slug: str,
+    story: StoryLedger,
+    epic: EpicLedger,
+    *,
+    studious_root: Path | None,
 ) -> Instrument:
     state = _state_for_status(story.status)
     reason = story.reason if state in AMBER_STATES else None
+    verdict_trail = (
+        tuple(_verdict_trail(e) for e in load_work_history(studious_root, epic_slug, story_slug))
+        if studious_root is not None
+        else ()
+    )
     return Instrument(
         id=story_slug,
         label=story.title or story_slug,
@@ -95,6 +121,7 @@ def _instrument(
         blocked_on=_blocked_on(story, epic.stories),
         fix_budget=_fix_budget(story),
         resolution_command=_resolution_command(epic_slug, story_slug, story),
+        verdict_trail=verdict_trail,
     )
 
 
@@ -115,10 +142,20 @@ def _cas_messages(instruments: tuple[Instrument, ...]) -> tuple[CasMessage, ...]
     )
 
 
-def build_protocol_board(epic: EpicLedger, *, stream_id: str) -> BoardView:
-    """Translate one epic ledger into the one board schema, whole-epic scope."""
+def build_protocol_board(
+    epic: EpicLedger, *, stream_id: str, studious_root: Path | None = None
+) -> BoardView:
+    """Translate one epic ledger into the one board schema, whole-epic scope.
+
+    `studious_root` is optional (defaults to `None`, no verdict trail) so
+    every existing caller/test that builds a board straight from an
+    in-memory `EpicLedger` -- with no filesystem to read a work-log
+    from -- keeps working unchanged; `control_room.board.dispatch` is the
+    one production caller that already has a real root in scope and passes
+    it through.
+    """
     instruments = tuple(
-        _instrument(epic.slug, story_slug, story, epic)
+        _instrument(epic.slug, story_slug, story, epic, studious_root=studious_root)
         for story_slug, story in epic.stories.items()
     )
     return BoardView(
