@@ -6,6 +6,35 @@ Where you sit and watch the gauges and screens to see what's going on: a tabbed 
 
 The founding opinion, and the moat: **progress and attention, not logs.** herdr, Orca, and Conductor multiplex agent terminals — panes of text streaming by, answering "what is it typing." control-room answers the operator's actual questions: *is it progressing, and which of my eight Claudes is allowed to interrupt me?* Logs live one deliberate click away, in a drawer, never ambient. This information design won a timed comprehension test against three denser alternatives before it was chosen.
 
+## Running it
+
+Requires Python 3.11+ and [`uv`](https://docs.astral.sh/uv/). T1 hasn't merged to
+`main` yet — check out the epic branch:
+
+```bash
+git clone https://github.com/jacquardlabs/control-room.git
+cd control-room
+git checkout epic/t1   # until T1 lands on main; use `main` afterward
+uv sync
+uv run control-room
+```
+
+This prints `control-room listening on http://127.0.0.1:4173` — open that URL in a
+browser tab and leave the server running (a second-monitor tab is the intended home).
+It's a local, stdlib-only, read-only process: it reads `~/.claude` (sessions, jobs,
+projects) and writes only its own local ack/preferences state under
+`~/.control-room` (`control_room/paths.py`) — nothing else on the machine, and nothing
+over the network. `--host`, `--port`, and `--poll-interval` are all overridable flags
+if the defaults collide with something local.
+
+Safe to run this way on more than one machine (e.g. work and personal) at once —
+each is an independent local server/process reading that machine's own `~/.claude`,
+with no shared or hosted state between them.
+
+See "Enabling hook-first detection" below for the optional step that makes
+notifications actually competitive with the harness's own, rather than bounded by
+the poll interval.
+
 ## What control-room must never become
 
 Not a log multiplexer or terminal-pane manager. Not hosted, not multi-user, not telemetered. Not a policy engine — it never answers, approves, or retries anything on its own; through T1 it is strictly read-only, and the T2 crossing into operator actions happens by written constitutional amendment, not drift. Not the per-epic board itself (that ships inside [studious](https://github.com/jacquardlabs/studious), issue #98) and not session analytics (that's [cctx](https://github.com/jacquardlabs/cctx)'s job, after the fact).
