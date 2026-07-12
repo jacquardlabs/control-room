@@ -10,8 +10,10 @@
   CAUTION with unacknowledged count · aggregate burn. The condensed control-room.
 - **Stream tabs** — one per session/workflow/task; tab label carries the stream's
   attention glyph so the strip and tabs never disagree.
-- **The board (per tab)** — the Flight Deck renderer adopted from studious #98:
-  instruments, annunciator lamps, severity-ordered CAS, verdict-trail drawer.
+- **The board (per tab)** — control-room's own schema-driven renderer for
+  board-protocol streams (schema adopted from studious #98, pixels are control-room's
+  own — settled 2026-07-11, see founding-note.md's addendum 3): instruments,
+  annunciator lamps, severity-ordered CAS, verdict-trail drawer.
 - **Notifications** — OS-level, fired only on attention-state *changes*, silenced by
   acknowledge, never repeated without a new event.
 - **Action log (T2+)** — append-only render of every operator action taken through

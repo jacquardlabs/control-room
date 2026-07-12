@@ -113,3 +113,43 @@ first-run auth doctor. Recorded as the T4 milestone; gated on T1's daily-driver
 verdict holding (a desktop appliance is only earned by a tool already kept open), and
 unordered relative to T2/T3. Through T3 control-room needs no credentials of its own —
 the monitor reads disk and launched sessions inherit the user's Claude Code auth.
+
+## Addendum 3 — 2026-07-11: adopt the schema, not the renderer
+
+Correction to the "Render" architecture bullet and the "T0 — the board ships first"
+bullet above: both described control-room as adopting studious #98's renderer
+("the schema-driven Flight Deck renderer... proven across 4 boards") alongside its
+schema. That commitment is superseded.
+
+**What happened:** studious #98 shipped (`bin/board-server` + `assets/board-ui/`,
+released in studious v2.18.0, hardened on a real epic — `worker-evidence-and-board`'s
+own `/gate-audit`/`/gate-acceptance` cycles caught and fixed real defects). Within the
+same epic, a follow-up redesign (studious PR #127) replaced the comprehension-tested
+Flight Deck rendering wholesale with a different visual metaphor ("the Operator
+Graphic") — different chrome, different vocabulary, different DOM/JS — and renamed
+that chrome to **"the control-room idiom,"** colliding with this product's own name.
+
+**Why that settles the question:** the renderer is a product surface that evolves on
+studious's own timeline, for studious's own reasons — not something a separate product
+can depend on staying stable. The schema (`reference/board-schema.md`,
+`reference/events-format.md`) is the actual load-bearing contract; design-history.md's
+own evidence (one schema, four different tested renderers) already proved a stable
+schema supports independent renderers. Adopting studious's specific renderer was never
+necessary for that property to hold, and the redesign-plus-naming-collision is now a
+concrete cost rather than a hypothetical one. It's also more consistent with control-
+room's own "one vocabulary across the fleet" principle: a vendored, separately-branded
+renderer for epic tabs alongside control-room's own renderer for every other tab type
+would be two visual languages inside one product.
+
+**The correction:** control-room adopts studious's board schema only. It builds and
+owns one renderer for every tab type — board-protocol streams (schema-driven) and
+generic streams (detection-driven) alike. This also narrows T1's entry gate: the
+condition was always "the schema is hardened on a real epic," not "studious's board-ui
+has stopped changing" — the former is what's actually shipped and proven; the latter
+was never achievable given studious's board continues to evolve independently.
+
+**Left open, deliberately:** control-room's own wall/fleet-strip visual language is
+also Flight-Deck-descended, from the same comprehension test studious's board
+originally shared. Whether that deserves its own look given studious's newer,
+differently-tested direction is a separate design question — not resolved by this
+addendum, and not something this correction should be read to imply.

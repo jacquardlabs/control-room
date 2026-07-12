@@ -72,7 +72,7 @@ the T1/T2/T3 milestones. Capability summary:
 | Generic attention detection (needs-you taxonomy) | T1 | Not started |
 | Board-protocol enrichment (epics show parks/verdicts/budgets) | T1 | Not started |
 | Fleet strip + tabs + SSE shell (viva-pattern local server) | T1 | Not started |
-| Flight Deck renderer adoption (from studious #98) | T1 | Not started |
+| Board-protocol rendering (schema adopted from studious #98; renderer is control-room's own) | T1 | Not started |
 | Notifications + acknowledge loop | T1 | Not started |
 | Per-stream cost vitals | T1 | Not started |
 | Read-only crossing amendment, then: resolve parks, answer questions, action log | T2 | Not started |
@@ -96,8 +96,10 @@ the T1/T2/T3 milestones. Capability summary:
 
 - **A log multiplexer** — no ambient terminal panes, ever. That's herdr/Orca's lane
   and the founding anti-pattern.
-- **The per-epic board** — ships in studious (#98); control-room adopts its renderer
-  and schema rather than forking them.
+- **The per-epic board's standalone form** (`studious board <slug>`) — ships in
+  studious (#98); control-room adopts its schema, not its renderer, and renders
+  board-protocol streams with its own schema-driven renderer (settled 2026-07-11 —
+  see founding-note.md's addendum 3).
 - **Session analytics/diagnosis** — cctx's job, retrospective. Shared parsing code is
   a library decision, never a product merge (settled 2026-07-07).
 - **Autonomy of any kind** — no auto-answering questions, no auto-approving
@@ -119,9 +121,14 @@ the T1/T2/T3 milestones. Capability summary:
 3. **Input-back reachability is unproven** for plain interactive sessions;
    permission prompts may be vendor-gated. T2 carries an explicit investigation story
    whose honest outcome may be "not reachable without vendor support."
-4. **The renderer/schema dependency runs through studious #98** — by design. If #98
-   stalls, T1's entry gate holds control-room too; that coupling is accepted and
-   recorded rather than worked around by forking.
+4. **The schema dependency runs through studious #98 — the renderer no longer does**
+   (settled 2026-07-11, see founding-note.md's addendum 3). Studious's own board-ui
+   redesigned within days of shipping (Flight Deck → Operator Graphic) and renamed its
+   chrome to "the control-room idiom" — concrete evidence that a vendored renderer
+   from a separately-evolving product churns in a way a JSON schema doesn't. T1's
+   entry gate is the schema (`board-schema.md`/`events-format.md`) being hardened on a
+   real epic — already satisfied as of the `worker-evidence-and-board` epic, whose
+   real `/gate-audit`/`/gate-acceptance` cycles caught and fixed real defects.
 
 ## Credentialing posture (recorded early, built at T4)
 
