@@ -18,6 +18,23 @@ Not a log multiplexer or terminal-pane manager. Not hosted, not multi-user, not 
 - **T3 — kick-off:** launch epics, workflows, and headless sessions from the chair. The all-in-one operator platform wrapping whatever workflow — entered only after a written vendor-landscape re-check.
 - **T4 — the desktop appliance:** a packaged desktop app (Tauri-class shell, winnow's Phase-4 packaging pattern) with Claude credentialing through the Agent SDK — the user's own subscription, a first-run auth doctor showing which credential is active and what it bills. Menubar caution light, login-item persistence, native notifications.
 
+## Enabling hook-first detection
+
+Attention detection works out of the box via poll-fallback (reading each
+stream's own disk state directly — see `control_room/attention/`). To make
+it hook-first instead — synchronous with Claude Code's own notification
+decisions, rather than bounded by a poll interval — install the hook script
+and register it:
+
+```
+uv tool install .    # from this repo root; resolves `control-room-attention-hook` on PATH
+```
+
+Then merge `control_room/attention/hooks.json`'s `"hooks"` block into your
+`~/.claude/settings.json`. Poll-fallback keeps covering every stream either
+way — background tasks can't fire hooks at all regardless of this step, and
+this step only makes detection faster for the streams that can.
+
 ## Status
 
 Design and backlog home — no code yet. See `docs/founding-note.md` for the full vision and its named tensions, `docs/design-history.md` for how the Flight Deck design was chosen, `PRODUCT.md` for product context, and the T1/T2/T3 milestones for the story breakdown. Build begins at T1's entry gate, behind the portfolio WIP cap.

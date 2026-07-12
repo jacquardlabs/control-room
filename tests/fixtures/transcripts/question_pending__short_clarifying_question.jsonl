@@ -1,0 +1,2 @@
+{"type": "user", "timestamp": "2026-07-12T13:44:00.000Z", "message": {"role": "user", "content": [{"type": "text", "text": "add a rate limiter"}]}}
+{"type": "assistant", "timestamp": "2026-07-12T13:44:05.000Z", "message": {"model": "claude-sonnet-5", "id": "msg_1", "type": "message", "role": "assistant", "content": [{"type": "text", "text": "Should I key the rate limiter by user ID or by IP address?"}], "stop_reason": "end_turn"}}
