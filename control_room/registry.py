@@ -13,10 +13,12 @@ creates, or deletes anything on disk.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
+from control_room.attention.jobs import is_terminal_status
 from control_room.discovery.interactive import discover_interactive_sessions, pid_is_alive
 from control_room.discovery.jobs import discover_jobs, job_activity_mtime
 from control_room.discovery.workflows import discover_session_workflows
@@ -152,9 +154,40 @@ class StreamRegistry:
         if record.kind == StreamKind.INTERACTIVE:
             return pid_is_alive(record.pid)
 
-        current_mtime = job_activity_mtime(Path(record.source_path))
+        source_path = Path(record.source_path)
+        if source_path.parent.name == "workflows" and not self._workflow_run_is_terminal(
+            source_path
+        ):
+            # A session-dispatched Workflow run's own top-level file goes
+            # untouched for long, normal stretches while genuinely still
+            # running -- each agent it dispatches updates its own file, not
+            # this one. mtime staleness alone falsely read an actively-
+            # running epic-driver as `died` within two poll intervals
+            # (confirmed live, 2026-07): "no evidence of life" from mtime
+            # is not the same fact as "no longer running," and only the
+            # first is true here. The self-reported status *is* alive
+            # evidence, checked directly; once it turns terminal, the
+            # mtime path below takes back over, same as any finished job.
+            return True
+
+        current_mtime = job_activity_mtime(source_path)
         previous_mtime = self._last_job_mtime.get(stream_id)
         self._last_job_mtime[stream_id] = current_mtime
         if previous_mtime is None:
             return True  # first observation -- nothing to compare against yet
         return current_mtime > previous_mtime
+
+    def _workflow_run_is_terminal(self, source_path: Path) -> bool:
+        """Best-effort read of a session-dispatched Workflow run's own
+        status. Unreadable/malformed degrades to "terminal" (falls through
+        to the ordinary mtime-staleness path below) -- the anti-false-amber
+        invariant cuts the other way here: this predicate's job is only to
+        *protect* a confirmed-alive run from a false `died`, never to
+        assert liveness it can't actually back up."""
+        try:
+            raw = json.loads(source_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return True
+        if not isinstance(raw, dict):
+            return True
+        return is_terminal_status(raw)

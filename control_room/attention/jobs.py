@@ -49,3 +49,22 @@ def classify_job_record(raw: dict) -> TailVerdict:
         reason = raw.get("detail") or "job reported a failure"
         return TailVerdict(AttentionState.DIED, reason=reason)
     return TailVerdict(AttentionState.GRINDING)
+
+
+def is_terminal_status(raw: dict) -> bool:
+    """Whether a job/Workflow-run's self-reported `state`/`status` is a
+    recognized terminal one (done or failed), same vocabulary as
+    `classify_job_record`.
+
+    Used by `control_room.registry`'s own liveness check for session-
+    dispatched Workflow runs specifically: their own top-level file goes
+    untouched for long, normal stretches while genuinely still running
+    (individual agents update their own files, not the run's), so mtime
+    staleness alone would (and did, confirmed live 2026-07) falsely read an
+    actively-running epic-driver as `died` within seconds. A non-terminal
+    status here means "still alive" regardless of mtime; a terminal one
+    still ages out through the ordinary mtime-staleness path, same as any
+    finished job.
+    """
+    state = raw.get("state") or raw.get("status")
+    return state in _DONE_STATES or state in _FAILED_STATES

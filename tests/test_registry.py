@@ -198,6 +198,56 @@ def test_a_workflow_tool_run_appears_alongside_its_dispatching_session(tmp_path)
     assert record.live_state == LiveState.LIVE
 
 
+def test_a_running_workflow_never_ages_out_while_its_own_file_is_quiet(tmp_path):
+    """Regression, reported live during dogfooding: a session running a
+    genuinely-active Workflow tool call (35 of 36 agents done, 39 minutes
+    in) showed as `died` in control-room within seconds. Each dispatched
+    agent updates its own file, not the run's own top-level status file --
+    mtime staleness on that one file is normal here, not evidence of death.
+    A `status: "running"` run must stay live indefinitely while quiet."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    projects_dir = tmp_path / "projects"
+    write_session_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_abc",
+        status="running",
+    )
+    registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
+
+    for _ in range(GONE_AFTER_MISSES + 5):
+        (record,) = registry.poll()
+
+    assert record.live_state == LiveState.LIVE
+    assert record.consecutive_misses == 0
+
+
+def test_a_completed_workflow_still_ages_out_normally(tmp_path):
+    """The fix above must not blanket-protect every workflow run forever --
+    once its own status turns terminal, it ages out through the ordinary
+    mtime-staleness path, same as any finished job."""
+    sessions_dir = tmp_path / "sessions"
+    jobs_dir = tmp_path / "jobs"
+    projects_dir = tmp_path / "projects"
+    write_session_workflow(
+        projects_dir,
+        project_dir_name="-proj",
+        session_id="sess-1",
+        cwd=str(tmp_path),
+        run_id="wf_abc",
+        status="completed",
+    )
+    registry = StreamRegistry(sessions_dir, jobs_dir, projects_dir=projects_dir)
+
+    for _ in range(GONE_AFTER_MISSES + 1):
+        results = registry.poll()
+
+    assert results == []
+
+
 def test_streams_map_to_worktrees_and_projects_correctly(tmp_path):
     main_root = make_main_repo(tmp_path / "control-room", branch="main")
     worktree = add_linked_worktree(
