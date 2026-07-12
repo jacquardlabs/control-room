@@ -6,8 +6,12 @@
 
 ## Surfaces
 
-- **The wall (fleet strip)** — always visible: N grinding · M need you · MASTER
-  CAUTION with unacknowledged count · aggregate burn. The condensed control-room.
+- **The wall (fleet strip)** — always visible: N grinding · R review-ready · M need
+  you · MASTER CAUTION with unacknowledged count · aggregate burn. The condensed
+  control-room. `review-ready` counts separately from `grinding` so a finished-and-
+  waiting stream is never mistaken for a still-working one; MASTER CAUTION blinks for
+  M only, never R (settled 2026-07-11, see the T1 design doc's gate-design-review
+  revision, `docs/specs/2026-07-11-t1-design.md`).
 - **Stream tabs** — one per session/workflow/task; tab label carries the stream's
   attention glyph so the strip and tabs never disagree.
 - **The board (per tab)** — control-room's own schema-driven renderer for
